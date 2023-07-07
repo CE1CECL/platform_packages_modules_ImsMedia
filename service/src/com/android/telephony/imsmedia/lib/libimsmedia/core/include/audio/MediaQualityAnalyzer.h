@@ -229,6 +229,7 @@ protected:
      */
     void processData(const int32_t timeCount);
     void processMediaQuality();
+    void notifyCallQuality();
     void notifyMediaQualityStatus();
     void AddEvent(uint32_t event, uint64_t paramA, uint64_t paramB);
     void processEvent(uint32_t event, uint64_t paramA, uint64_t paramB);
@@ -247,12 +248,18 @@ protected:
     std::list<LostPacket*> mListLostPacket;
     /** The list of the packets sent */
     std::list<RtpPacket*> mListTxPacket;
+    /** The time of call started in milliseconds unit*/
+    int32_t mTimeStarted;
     /** The ssrc of the receiving Rtp stream to identify */
     int32_t mSSRC;
     /** The codec type of the audio session retrieved from the AudioConfig.h */
     int32_t mCodecType;
     /** The codec attribute of the audio session, it could be bandwidth in evs codec */
     int32_t mCodecAttribute;
+    /** Whether RTP is activated for the receiver or not */
+    bool mIsRxRtpEnabled;
+    /** Whether RTCP is activated for both sender and receiver */
+    bool mIsRtcpEnabled;
     /** The begin of the rx rtp packet sequence number for Rtcp-Xr report */
     int32_t mBeginSeq;
     /** The end of the rx rtp packet sequence number for Rtcp-Xr report */

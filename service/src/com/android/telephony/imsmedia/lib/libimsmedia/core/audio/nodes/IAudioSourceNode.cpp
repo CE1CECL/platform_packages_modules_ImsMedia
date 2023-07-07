@@ -33,6 +33,8 @@ IAudioSourceNode::IAudioSourceNode(BaseSessionCallback* callback) :
     mRunningCodecMode = 0;
     mFirstFrame = false;
     mMediaDirection = 0;
+    mIsOctetAligned = false;
+    mIsDtxEnabled = false;
 }
 
 IAudioSourceNode::~IAudioSourceNode() {}
@@ -42,9 +44,9 @@ kBaseNodeId IAudioSourceNode::GetNodeId()
     return kNodeIdAudioSource;
 }
 
-ImsMediaResult IAudioSourceNode::Start()
+ImsMediaResult IAudioSourceNode::ProcessStart()
 {
-    IMLOGD2("[Start] codec[%d], mode[%d]", mCodecType, mCodecMode);
+    IMLOGD2("[ProcessStart] codec[%d], mode[%d]", mCodecType, mCodecMode);
 
     if (mAudioSource)
     {
@@ -54,6 +56,8 @@ ImsMediaResult IAudioSourceNode::Start()
         mAudioSource->SetPtime(mPtime);
         mAudioSource->SetSamplingRate(mSamplingRate * 1000);
         mAudioSource->SetMediaDirection(mMediaDirection);
+        mAudioSource->SetDtxEnabled(mIsDtxEnabled);
+        mAudioSource->SetOctetAligned(mIsOctetAligned);
 
         if (mCodecType == kAudioCodecEvs)
         {
@@ -97,6 +101,11 @@ bool IAudioSourceNode::IsRunTime()
     return true;
 }
 
+bool IAudioSourceNode::IsRunTimeStart()
+{
+    return false;
+}
+
 bool IAudioSourceNode::IsSourceNode()
 {
     return true;
@@ -115,6 +124,7 @@ void IAudioSourceNode::SetConfig(void* config)
     if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
     {
         mCodecMode = pConfig->getAmrParams().getAmrMode();
+        mIsOctetAligned = pConfig->getAmrParams().getOctetAligned();
     }
     else if (mCodecType == kAudioCodecEvs)
     {
@@ -127,6 +137,7 @@ void IAudioSourceNode::SetConfig(void* config)
     mMediaDirection = pConfig->getMediaDirection();
     mSamplingRate = pConfig->getSamplingRateKHz();
     mPtime = pConfig->getPtimeMillis();
+    mIsDtxEnabled = pConfig->getDtxEnabled();
 }
 
 bool IAudioSourceNode::IsSameConfig(void* config)
@@ -144,7 +155,9 @@ bool IAudioSourceNode::IsSameConfig(void* config)
         {
             return (mCodecMode == pConfig->getAmrParams().getAmrMode() &&
                     mSamplingRate == pConfig->getSamplingRateKHz() &&
-                    mMediaDirection == pConfig->getMediaDirection());
+                    mMediaDirection == pConfig->getMediaDirection() &&
+                    mIsDtxEnabled == pConfig->getDtxEnabled() &&
+                    mIsOctetAligned == pConfig->getAmrParams().getOctetAligned());
         }
         else if (mCodecType == kAudioCodecEvs)
         {
@@ -154,7 +167,8 @@ bool IAudioSourceNode::IsSameConfig(void* config)
                                     pConfig->getEvsParams().getEvsBandwidth()) &&
                     mEvsChAwOffset == pConfig->getEvsParams().getChannelAwareMode() &&
                     mSamplingRate == pConfig->getSamplingRateKHz() &&
-                    mMediaDirection == pConfig->getMediaDirection());
+                    mMediaDirection == pConfig->getMediaDirection() &&
+                    mIsDtxEnabled == pConfig->getDtxEnabled());
         }
     }
 

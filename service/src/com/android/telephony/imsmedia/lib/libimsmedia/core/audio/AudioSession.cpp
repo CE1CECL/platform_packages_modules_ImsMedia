@@ -33,6 +33,8 @@ AudioSession::~AudioSession()
 {
     IMLOGD0("[~AudioSession]");
 
+    mMediaQualityAnalyzer->stop();
+
     while (mListGraphRtpTx.size() > 0)
     {
         AudioStreamGraphRtpTx* graph = mListGraphRtpTx.front();
@@ -71,8 +73,6 @@ AudioSession::~AudioSession()
         mListGraphRtcp.pop_front();
         delete graph;
     }
-
-    mMediaQualityAnalyzer->stop();
 }
 
 SessionState AudioSession::getState()
@@ -121,6 +121,14 @@ ImsMediaResult AudioSession::startGraph(RtpConfig* config)
     if (std::strcmp(pConfig->getRemoteAddress().c_str(), "") == 0)
     {
         return RESULT_INVALID_PARAM;
+    }
+
+    IMLOGI1("[startGraph] state[%d]", getState());
+
+    if (mMediaQualityAnalyzer != nullptr)
+    {
+        mMediaQualityAnalyzer->setConfig(reinterpret_cast<AudioConfig*>(config));
+        mMediaQualityAnalyzer->start();
     }
 
     ImsMediaResult ret = RESULT_NOT_READY;
@@ -228,17 +236,6 @@ ImsMediaResult AudioSession::startGraph(RtpConfig* config)
                 return ret;
             }
         }
-    }
-
-    // TODO : check that the timing is correct
-    IMLOGI1("[startGraph] state[%d]", getState());
-
-    if (mMediaQualityAnalyzer != nullptr &&
-            !mMediaQualityAnalyzer->isSameConfig(reinterpret_cast<AudioConfig*>(config)))
-    {
-        mMediaQualityAnalyzer->stop();
-        mMediaQualityAnalyzer->setConfig(reinterpret_cast<AudioConfig*>(config));
-        mMediaQualityAnalyzer->start();
     }
 
     return ret;
