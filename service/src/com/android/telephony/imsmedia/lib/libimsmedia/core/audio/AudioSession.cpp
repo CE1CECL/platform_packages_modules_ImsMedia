@@ -500,6 +500,7 @@ void AudioSession::onEvent(int32_t type, uint64_t param1, uint64_t param2)
                     "AUDIO_REQUEST_EVENT", type, mSessionId, param1, param2);
             break;
         case kRequestRoundTripTimeDelayUpdate:
+        case kRequestAudioPlayingStatus:
         case kCollectPacketInfo:
         case kCollectOptionalInfo:
         case kCollectRxRtpStatus:
@@ -508,6 +509,26 @@ void AudioSession::onEvent(int32_t type, uint64_t param1, uint64_t param2)
             if (mMediaQualityAnalyzer != nullptr)
             {
                 mMediaQualityAnalyzer->SendEvent(type, param1, param2);
+            }
+            else
+            {
+                switch (type)
+                {
+                    case kCollectRxRtpStatus:
+                    case kCollectOptionalInfo:
+                        if (param1)
+                        {
+                            delete reinterpret_cast<SessionCallbackParameter*>(param1);
+                        }
+                        break;
+
+                    case kCollectPacketInfo:
+                        if (param2)
+                        {
+                            delete reinterpret_cast<RtpPacket*>(param2);
+                        }
+                        break;
+                }
             }
             break;
         default:

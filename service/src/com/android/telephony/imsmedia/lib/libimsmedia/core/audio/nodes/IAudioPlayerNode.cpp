@@ -21,12 +21,12 @@
 #include <ImsMediaTimer.h>
 #include <ImsMediaAudioUtil.h>
 #include <AudioConfig.h>
-#include <RtpConfig.h>
+#include <AudioJitterBuffer.h>
 #include <string.h>
 
 #define MAX_CODEC_EVS_AMR_IO_MODE 9
-#define JITTER_BUFFER_SIZE_INIT   4
-#define JITTER_BUFFER_SIZE_MIN    4
+#define JITTER_BUFFER_SIZE_INIT   3
+#define JITTER_BUFFER_SIZE_MIN    3
 #define JITTER_BUFFER_SIZE_MAX    13
 
 IAudioPlayerNode::IAudioPlayerNode(BaseSessionCallback* callback) :
@@ -59,6 +59,8 @@ ImsMediaResult IAudioPlayerNode::Start()
     if (mJitterBuffer)
     {
         mJitterBuffer->SetCodecType(mCodecType);
+        reinterpret_cast<AudioJitterBuffer*>(mJitterBuffer)
+                ->SetEvsRedundantFrameOffset(mEvsChannelAwOffset);
     }
 
     // reset the jitter
@@ -303,6 +305,7 @@ void* IAudioPlayerNode::run()
     uint32_t timestamp = 0;
     bool mark = false;
     uint32_t seq = 0;
+    uint32_t lastPlayedSeq = 0;
     uint32_t currentTime = 0;
     uint64_t nNextTime = ImsMediaTimer::GetTimeInMicroSeconds();
     bool isFirstFrameReceived = false;
@@ -336,15 +339,38 @@ void* IAudioPlayerNode::run()
 
         if (GetData(&subtype, &data, &size, &timestamp, &mark, &seq, &datatype, &currentTime))
         {
-            IMLOGD_PACKET2(
-                    IM_PACKET_LOG_AUDIO, "[run] write buffer size[%d], TS[%u]", size, timestamp);
+            IMLOGD_PACKET3(IM_PACKET_LOG_AUDIO, "[run] write buffer size[%u], TS[%u], datatype[%u]",
+                    size, timestamp, datatype);
 #ifdef FILE_DUMP
             size > 0 ? std::fwrite(data, size, 1, file) : std::fwrite(&noDataHeader, 1, 1, file);
 #endif
-            if (mAudioPlayer->onDataFrame(data, size, datatype == MEDIASUBTYPE_AUDIO_SID))
+            lastPlayedSeq = seq;
+            FrameType frameType = SPEECH;
+
+            switch (datatype)
+            {
+                case MEDIASUBTYPE_AUDIO_SID:
+                    frameType = SID;
+                    break;
+                case MEDIASUBTYPE_AUDIO_NODATA:
+                    frameType = NO_DATA;
+                    break;
+                default:
+                case MEDIASUBTYPE_AUDIO_NORMAL:
+                    frameType = SPEECH;
+                    break;
+            }
+
+            if (mCallback != nullptr)
+            {
+                mCallback->SendEvent(kRequestAudioPlayingStatus,
+                        frameType == SPEECH ? kAudioTypeVoice : kAudioTypeNoData, 0);
+            }
+
+            if (mAudioPlayer->onDataFrame(data, size, frameType, false, 0))
             {
                 // send buffering complete message to client
-                if (!isFirstFrameReceived)
+                if (!isFirstFrameReceived && mCallback != nullptr)
                 {
                     mCallback->SendEvent(kImsMediaEventFirstPacketReceived,
                             reinterpret_cast<uint64_t>(new AudioConfig(*mConfig)));
@@ -356,8 +382,33 @@ void* IAudioPlayerNode::run()
         }
         else if (isFirstFrameReceived)
         {
-            IMLOGD_PACKET0(IM_PACKET_LOG_AUDIO, "[run] no data");
-            mAudioPlayer->onDataFrame(nullptr, 0, false);
+            uint8_t nextFrameByte = 0;
+            bool hasNextFrame = false;
+            uint32_t lostSeq = lastPlayedSeq + 1;
+            if (mRunningCodecMode == kImsAudioEvsPrimaryMode13200 &&
+                    (mEvsChannelAwOffset == 2 || mEvsChannelAwOffset == 3 ||
+                            mEvsChannelAwOffset == 5 || mEvsChannelAwOffset == 7) &&
+                    GetRedundantFrame(lostSeq, &data, &size, &hasNextFrame, &nextFrameByte))
+            {
+                lastPlayedSeq++;
+                mAudioPlayer->onDataFrame(data, size, LOST, hasNextFrame, nextFrameByte);
+
+                if (mCallback != nullptr)
+                {
+                    mCallback->SendEvent(kRequestAudioPlayingStatus, kAudioTypeVoice, 0);
+                }
+            }
+            else
+            {
+                IMLOGD_PACKET0(IM_PACKET_LOG_AUDIO, "[run] no data");
+                mAudioPlayer->onDataFrame(nullptr, 0, NO_DATA, false, 0);
+
+                if (mCallback != nullptr)
+                {
+                    mCallback->SendEvent(kRequestAudioPlayingStatus, kAudioTypeNoData, 0);
+                }
+            }
+
 #ifdef FILE_DUMP
             std::fwrite(&noDataHeader, 1, 1, file);
 #endif
