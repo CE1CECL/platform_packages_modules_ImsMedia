@@ -551,8 +551,10 @@ void MediaQualityAnalyzer::processMediaQuality()
             int32_t lossRate = numLostPacketsInDuration * 100 /
                     (numReceivedPacketsInDuration + numLostPacketsInDuration);
 
-            IMLOGD3("[processMediaQuality] lossRate=%d, received=%d, lost=%d", lossRate,
-                    numReceivedPacketsInDuration, numLostPacketsInDuration);
+            IMLOGD4("[processMediaQuality] MediaQuality stats [last %d msec]: lossRate=%d, "
+                    "received=%d, lost=%d",
+                    mPacketLossDuration, lossRate, numReceivedPacketsInDuration,
+                    numLostPacketsInDuration);
             mQualityStatus.setRtpPacketLossRate(lossRate);
         }
     }
