@@ -23,7 +23,9 @@ import android.os.RemoteException;
 import android.support.annotation.VisibleForTesting;
 import android.telephony.imsmedia.IImsTextSession;
 import android.telephony.imsmedia.IImsTextSessionCallback;
+import android.telephony.imsmedia.ImsMediaSession;
 import android.telephony.imsmedia.MediaQualityThreshold;
+import android.telephony.imsmedia.RtpConfig;
 import android.telephony.imsmedia.TextConfig;
 import android.util.Log;
 
@@ -95,11 +97,18 @@ public final class TextSession extends IImsTextSession.Stub implements IMediaSes
     @Override
     public void openSession(OpenSessionParams sessionParams) {
         Utils.sendMessage(mHandler, CMD_OPEN_SESSION, sessionParams);
+        RtpConfig rtpConfig = sessionParams.getRtpConfig();
+        if (rtpConfig != null) {
+            WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                    mSessionId, rtpConfig.getMediaDirection());
+        }
     }
 
     @Override
     public void closeSession() {
         Utils.sendMessage(mHandler, CMD_CLOSE_SESSION);
+        WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                mSessionId, RtpConfig.MEDIA_DIRECTION_NO_FLOW);
     }
 
     @Override
@@ -111,6 +120,8 @@ public final class TextSession extends IImsTextSession.Stub implements IMediaSes
     public void modifySession(TextConfig config) {
         Log.d(TAG, "modifySession: " + config);
         Utils.sendMessage(mHandler, CMD_MODIFY_SESSION, config);
+        WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                mSessionId, config.getMediaDirection());
     }
 
     @Override
@@ -196,7 +207,10 @@ public final class TextSession extends IImsTextSession.Stub implements IMediaSes
     private void handleOpenSession(OpenSessionParams sessionParams) {
         mTextListener.setMediaCallback(sessionParams.getCallback());
         Log.d(TAG, "handleOpenSession");
-        mTextService.openSession(mSessionId, sessionParams);
+        int result = mTextService.openSession(mSessionId, sessionParams);
+        if (result != ImsMediaSession.RESULT_SUCCESS) {
+            handleOpenFailure(result);
+        }
     }
 
     private void handleCloseSession() {
@@ -230,6 +244,9 @@ public final class TextSession extends IImsTextSession.Stub implements IMediaSes
             mCallback.onOpenSessionFailure(error);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to notify openFailure: " + e);
+        }  finally {
+            WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                    mSessionId, RtpConfig.MEDIA_DIRECTION_NO_FLOW);
         }
     }
 
@@ -243,6 +260,9 @@ public final class TextSession extends IImsTextSession.Stub implements IMediaSes
 
     private void handleModifySessionRespose(TextConfig config, int error) {
         try {
+            if (error != ImsMediaSession.RESULT_SUCCESS) {
+                Log.e(TAG, "modifySession failed with error: " + error);
+            }
             mCallback.onModifySessionResponse(config, error);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to notify modifySessionResponse: " + e);

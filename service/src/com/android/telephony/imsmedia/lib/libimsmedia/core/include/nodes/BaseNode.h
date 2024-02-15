@@ -49,6 +49,7 @@ enum kBaseNodeId
     kNodeIdAudioSource,
     kNodeIdAudioPlayer,
     kNodeIdDtmfEncoder,
+    kNodeIdDtmfSender,
     kNodeIdAudioPayloadEncoder,
     kNodeIdAudioPayloadDecoder,
     // for Video
@@ -84,7 +85,7 @@ public:
      *
      * @param callback the instance of callback listener
      */
-    void SetSchedulerCallback(std::shared_ptr<StreamSchedulerCallback>& callback);
+    void SetSchedulerCallback(const std::shared_ptr<StreamSchedulerCallback>& callback);
 
     /**
      * @brief Connects a node to rear to this node. It makes to pass the processed data to next node
@@ -112,6 +113,13 @@ public:
     virtual kBaseNodeId GetNodeId();
 
     /**
+     * @brief Prepare the node before start it
+     *
+     * @return bool Returns true when it starts well without error
+     */
+    virtual bool Prepare();
+
+    /**
      * @brief Starts to run the node with the configuration already set by the SetConfig method
      *
      * @return ImsMediaResult return RESULT_SUCCESS when it starts well without error
@@ -135,7 +143,7 @@ public:
     /**
      * @brief Checks the node processes data in main thread.
      */
-    virtual bool IsRunTime() = 0;
+    virtual bool IsRunTime();
 
     /**
      * @brief Checks the node to start in main thread

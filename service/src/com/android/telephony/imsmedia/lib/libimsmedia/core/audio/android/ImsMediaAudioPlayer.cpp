@@ -48,7 +48,7 @@ ImsMediaAudioPlayer::ImsMediaAudioPlayer()
     mEvsBandwidth = kEvsBandwidthNone;
     memset(mBuffer, 0, sizeof(mBuffer));
     mEvsBitRate = 0;
-    mEvsCodecHeaderMode = kRtpPyaloadHeaderModeEvsHeaderFull;
+    mEvsCodecHeaderMode = kRtpPayloadHeaderModeEvsHeaderFull;
     mIsFirstFrame = false;
     mIsEvsInitialized = false;
     mIsOctetAligned = false;
@@ -66,6 +66,7 @@ void ImsMediaAudioPlayer::SetCodec(int32_t type)
 void ImsMediaAudioPlayer::SetEvsBitRate(int32_t bitRate)
 {
     mEvsBitRate = bitRate;
+    IMLOGD_PACKET1(IM_PACKET_LOG_AUDIO, "[SetEvsBitRate] mEvsBitRate[%d]", mEvsBitRate);
 }
 
 void ImsMediaAudioPlayer::SetEvsChAwOffset(int32_t offset)
@@ -85,7 +86,7 @@ void ImsMediaAudioPlayer::SetEvsBandwidth(int32_t evsBandwidth)
 
 void ImsMediaAudioPlayer::SetEvsPayloadHeaderMode(int32_t EvsPayloadHeaderMode)
 {
-    mEvsCodecHeaderMode = (kRtpPyaloadHeaderMode)EvsPayloadHeaderMode;
+    mEvsCodecHeaderMode = (kRtpPayloadHeaderMode)EvsPayloadHeaderMode;
 }
 
 void ImsMediaAudioPlayer::SetCodecMode(uint32_t mode)
@@ -102,6 +103,15 @@ void ImsMediaAudioPlayer::SetDtxEnabled(bool isDtxEnabled)
 void ImsMediaAudioPlayer::SetOctetAligned(bool isOctetAligned)
 {
     mIsOctetAligned = isOctetAligned;
+}
+
+void ImsMediaAudioPlayer::ProcessCmr(const uint32_t cmr)
+{
+    IMLOGD1("[ProcessCmr] cmr[%d]", cmr);
+
+    mCodecMode = cmr;
+    Stop();
+    Start();
 }
 
 bool ImsMediaAudioPlayer::Start()
@@ -266,7 +276,8 @@ void ImsMediaAudioPlayer::Stop()
     IMLOGD0("[Stop] exit ");
 }
 
-bool ImsMediaAudioPlayer::onDataFrame(uint8_t* buffer, uint32_t size)
+bool ImsMediaAudioPlayer::onDataFrame(uint8_t* buffer, uint32_t size, FrameType /*frameType*/,
+        bool /*hasNextFrame*/, uint8_t /*nextFrameByte*/)
 {
     std::lock_guard<std::mutex> guard(mMutex);
 
@@ -289,7 +300,7 @@ bool ImsMediaAudioPlayer::onDataFrame(uint8_t* buffer, uint32_t size)
     }
     else if (mCodecType == kAudioCodecEvs)
     {
-        // TODO: Integration with libEVS is required.
+        // TODO:Integration with libEVS is required.
         return decodeEvs(buffer, size);
     }
     return false;

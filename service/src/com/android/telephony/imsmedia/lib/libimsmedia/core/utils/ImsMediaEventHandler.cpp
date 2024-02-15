@@ -32,7 +32,7 @@ void ImsMediaEventHandler::Init(const char* strName)
     mbTerminate = false;
     gListEventHandler.push_back(this);
     IMLOGD1("[Init] %s", mName);
-    StartThread();
+    StartThread("ImsMediaEventHandler");
 }
 
 void ImsMediaEventHandler::Deinit()
@@ -111,14 +111,18 @@ void* ImsMediaEventHandler::run()
                 break;
             }
 
-            processEvent(mListevent.front(), mListParamA.front(), mListParamB.front(),
-                    mListParamC.front());
+            uint32_t event = mListevent.front();
+            uint64_t paramA = mListParamA.front();
+            uint64_t paramB = mListParamB.front();
+            uint64_t paramC = mListParamC.front();
 
             mListevent.pop_front();
             mListParamA.pop_front();
             mListParamB.pop_front();
             mListParamC.pop_front();
             mMutexEvent.unlock();
+
+            processEvent(event, paramA, paramB, paramC);
 
             if (IsThreadStopped())
             {

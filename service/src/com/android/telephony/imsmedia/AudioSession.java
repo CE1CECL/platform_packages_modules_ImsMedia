@@ -27,9 +27,12 @@ import android.telephony.ims.RtpHeaderExtension;
 import android.telephony.imsmedia.AudioConfig;
 import android.telephony.imsmedia.IImsAudioSession;
 import android.telephony.imsmedia.IImsAudioSessionCallback;
+import android.telephony.imsmedia.ImsMediaSession;
 import android.telephony.imsmedia.MediaQualityStatus;
 import android.telephony.imsmedia.MediaQualityThreshold;
+import android.telephony.imsmedia.RtpReceptionStats;
 import android.util.Log;
+import android.telephony.imsmedia.RtpConfig;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -57,6 +60,8 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
     public static final int CMD_SET_MEDIA_QUALITY_THRESHOLD = 109;
     public static final int CMD_START_DTMF = 110;
     public static final int CMD_STOP_DTMF = 111;
+    public static final int CMD_REQUEST_RECEPTION_STATS = 112;
+    public static final int CMD_ADJUST_DELAY = 113;
 
     public static final int EVENT_OPEN_SESSION_SUCCESS = 201;
     public static final int EVENT_OPEN_SESSION_FAILURE = 202;
@@ -70,6 +75,7 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
     public static final int EVENT_DTMF_RECEIVED_IND = 210;
     public static final int EVENT_CALL_QUALITY_CHANGE_IND = 211;
     public static final int EVENT_SESSION_CLOSED = 212;
+    public static final int EVENT_NOTIFY_RECEPTION_STATS = 213;
 
     private static final int DTMF_DEFAULT_DURATION = 140;
 
@@ -140,11 +146,18 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
     @Override
     public void openSession(OpenSessionParams sessionParams) {
         Utils.sendMessage(mHandler, CMD_OPEN_SESSION, sessionParams);
+        RtpConfig rtpConfig = sessionParams.getRtpConfig();
+        if (rtpConfig != null) {
+            WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                    mSessionId, rtpConfig.getMediaDirection());
+        }
     }
 
     @Override
     public void closeSession() {
         Utils.sendMessage(mHandler, CMD_CLOSE_SESSION);
+        WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                mSessionId, RtpConfig.MEDIA_DIRECTION_NO_FLOW);
     }
 
     @Override
@@ -156,6 +169,8 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
     public void modifySession(AudioConfig config) {
         Log.d(TAG, "modifySession: " + config);
         Utils.sendMessage(mHandler, CMD_MODIFY_SESSION, config);
+        WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                mSessionId, config.getMediaDirection());
     }
 
     @Override
@@ -203,6 +218,18 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
     public void setMediaQualityThreshold(MediaQualityThreshold threshold) {
         Log.d(TAG, "setMediaQualityThreshold: " + threshold);
         Utils.sendMessage(mHandler, CMD_SET_MEDIA_QUALITY_THRESHOLD, threshold);
+    }
+
+    @Override
+    public void requestRtpReceptionStats(int intervalMs) {
+        Log.d(TAG, "requestRtpReceptionStats: interval=" + intervalMs);
+        Utils.sendMessage(mHandler, CMD_REQUEST_RECEPTION_STATS, intervalMs);
+    }
+
+    @Override
+    public void adjustDelay(int delayMs) {
+        Log.d(TAG, "adjustDelay: delay=" + delayMs);
+        Utils.sendMessage(mHandler, CMD_ADJUST_DELAY, delayMs);
     }
 
     @Override
@@ -272,6 +299,12 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
                 case CMD_SET_MEDIA_QUALITY_THRESHOLD:
                     handleSetMediaQualityThreshold((MediaQualityThreshold)msg.obj);
                     break;
+                case CMD_REQUEST_RECEPTION_STATS:
+                    handleRequestRtpReceptionStats((int) msg.obj);
+                    break;
+                case CMD_ADJUST_DELAY:
+                    handleAdjustDelay((int) msg.obj);
+                    break;
                 case EVENT_OPEN_SESSION_SUCCESS:
                     handleOpenSuccess(msg.obj);
                     break;
@@ -308,6 +341,9 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
                 case EVENT_CALL_QUALITY_CHANGE_IND:
                     handleCallQualityChangeInd((CallQuality) msg.obj);
                     break;
+                case EVENT_NOTIFY_RECEPTION_STATS:
+                    handleNotifyReceptionStats((RtpReceptionStats) msg.obj);
+                    break;
                 default:
             }
         }
@@ -318,7 +354,10 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
             mOffloadService.openSession(mSessionId, sessionParams);
         } else {
             mAudioListener.setMediaCallback(sessionParams.getCallback());
-            mAudioService.openSession(mSessionId, sessionParams);
+            int result = mAudioService.openSession(mSessionId, sessionParams);
+            if (result != ImsMediaSession.RESULT_SUCCESS) {
+                handleOpenFailure(result);
+            }
         }
     }
 
@@ -428,6 +467,18 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
         }
     }
 
+    private void handleRequestRtpReceptionStats(int intervalMs) {
+        if (!isAudioOffload()) {
+            mLocalSession.requestRtpReceptionStats(intervalMs);
+        }
+    }
+
+    private void handleAdjustDelay(int delayMs) {
+        if (!isAudioOffload()) {
+            mLocalSession.adjustDelay(delayMs);
+        }
+    }
+
     private void handleOpenSuccess(Object session) {
        if (session instanceof IImsMediaSession) {
             try {
@@ -452,6 +503,9 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
             mCallback.onOpenSessionFailure(error);
         }  catch (RemoteException e) {
             Log.e(TAG, "Failed to notify openFailure: " + e);
+        } finally {
+            WakeLockManager.getInstance().manageWakeLockOnMediaDirectionUpdate(
+                    mSessionId, RtpConfig.MEDIA_DIRECTION_NO_FLOW);
         }
     }
 
@@ -465,6 +519,9 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
 
     private void handleModifySessionRespose(AudioConfig config, int error) {
         try {
+            if (error != ImsMediaSession.RESULT_SUCCESS) {
+                Log.e(TAG, "modifySession failed with error: " + error);
+            }
             mCallback.onModifySessionResponse(config, error);
         }  catch (RemoteException e) {
             Log.e(TAG, "Failed to notify modifySessionResponse: " + e);
@@ -509,7 +566,6 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
         }  catch (RemoteException e) {
             Log.e(TAG, "Failed to notify media quality status: " + e);
         }
-
     }
 
     private void handleTriggerAnbrQuery(AudioConfig config) {
@@ -533,6 +589,14 @@ public final class AudioSession extends IImsAudioSession.Stub implements IMediaS
             mCallback.onCallQualityChanged(callQuality);
         }  catch (RemoteException e) {
             Log.e(TAG, "Failed to notify call quality changed indication: " + e);
+        }
+    }
+
+    private void handleNotifyReceptionStats(RtpReceptionStats stats) {
+        try {
+            mCallback.notifyRtpReceptionStats(stats);
+        }  catch (RemoteException e) {
+            Log.e(TAG, "Failed to notify rtp reception statistics: " + e);
         }
     }
 }

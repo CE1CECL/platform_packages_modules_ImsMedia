@@ -30,6 +30,8 @@ using ::testing::Pointee;
 using ::testing::Ref;
 using ::testing::Return;
 
+namespace
+{
 // RtpConfig
 const int32_t kMediaDirection = RtpConfig::MEDIA_DIRECTION_SEND_RECEIVE;
 const android::String8 kRemoteAddress("127.0.0.1");
@@ -68,7 +70,6 @@ const bool kUseHeaderFullOnly = false;
 const int8_t kcodecModeRequest = 15;
 
 int32_t kSessionId = 0;
-
 static ImsMediaCondition gCondition;
 
 class AudioManagerCallback
@@ -445,6 +446,7 @@ TEST_F(AudioManagerTest, testDeleteConfig)
     parcel.setDataPosition(0);
     manager.sendMessage(kSessionId, parcel);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -465,6 +467,7 @@ TEST_F(AudioManagerTest, testSendDtmf)
 
     manager.sendMessage(kSessionId, parcel);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -497,6 +500,7 @@ TEST_F(AudioManagerTest, testSendHeaderExtension)
 
     manager.sendMessage(kSessionId, parcel);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -532,6 +536,7 @@ TEST_F(AudioManagerTest, testSetMediaQualityThreshold)
 
     manager.sendMessage(kSessionId, parcel);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -549,6 +554,7 @@ TEST_F(AudioManagerTest, testSendInternalEventCmr)
     ImsMediaEventHandler::SendEvent(
             "AUDIO_REQUEST_EVENT", kRequestAudioCmr, kSessionId, kCmrCode, kCmrDefine);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -566,6 +572,7 @@ TEST_F(AudioManagerTest, testSendInternalEventRtcpXr)
     ImsMediaEventHandler::SendEvent(
             "AUDIO_REQUEST_EVENT", kRequestSendRtcpXrReport, kSessionId, param1, param2);
 
+    gCondition.wait_timeout(20);
     closeSession(kSessionId);
 }
 
@@ -681,3 +688,4 @@ TEST_F(AudioManagerTest, testCallQualityInd)
     EXPECT_EQ(callback.response, kAudioCallQualityChangedInd);
     EXPECT_EQ(callback.callQuality, quality);
 }
+}  // namespace

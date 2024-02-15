@@ -68,6 +68,22 @@ static const uint32_t gaEVSPrimaryByteLen[32] = {
         0,
 };
 
+static const uint32_t gaEVSPrimaryHeaderFullByteLen[32] = {
+        8,    // 2.8 special case
+        19,   // 7.2
+        21,   // 8.0
+        25,   // 9.6
+        34,   // 13.2
+        42,   // 16.4
+        62,   // 24.4
+        81,   // 32.0
+        121,  // 48.0
+        161,  // 64.0
+        241,  // 96.0
+        321,  // 128.0
+        7,    // SID
+};
+
 static const uint32_t gaEVSPrimaryBitLen[32] = {
         56,    // 2.8 Special case
         144,   // 7.2
@@ -223,32 +239,32 @@ uint32_t ImsMediaAudioUtil::ConvertLenToAmrMode(uint32_t nLen)
     uint32_t i;
     if (nLen == 0)
     {
-        return 15;
+        return kImsAudioAmrModeNoData;
     }
 
-    for (i = 0; i <= MAX_AMR_MODE; i++)
+    for (i = 0; i <= kImsAudioAmrModeSID; i++)
     {
         if (gaAMRLen[i] == nLen)
             return i;
     }
-    return 0;
+    return kImsAudioAmrModeNoData;
 }
 
 uint32_t ImsMediaAudioUtil::ConvertAmrWbModeToLen(uint32_t mode)
 {
-    if (mode == kImsAudioAmrWbModeNoData)
-        return 0;
     if (mode > kImsAudioAmrWbModeSID)
+    {
         return 0;
+    }
     return gaAMRWBLen[mode];
 }
 
 uint32_t ImsMediaAudioUtil::ConvertAmrWbModeToBitLen(uint32_t mode)
 {
-    if (mode == kImsAudioAmrWbModeNoData)
-        return 0;
     if (mode > kImsAudioAmrWbModeSID)
+    {
         return 0;
+    }
     return gaAMRWBbitLen[mode];
 }
 
@@ -256,15 +272,31 @@ uint32_t ImsMediaAudioUtil::ConvertLenToAmrWbMode(uint32_t nLen)
 {
     uint32_t i;
     if (nLen == 0)
+    {
         return kImsAudioAmrWbModeNoData;
+    }
+
     for (i = 0; i <= kImsAudioAmrWbModeSID; i++)
     {
         if (gaAMRWBLen[i] == nLen)
             return i;
     }
-    return 0;
+    return kImsAudioAmrWbModeNoData;
 }
 
+bool ImsMediaAudioUtil::CheckEVSPrimaryHeaderFullModeFromSize(uint32_t size)
+{
+    auto it = std::find(std::begin(gaEVSPrimaryHeaderFullByteLen),
+            std::end(gaEVSPrimaryHeaderFullByteLen), size);
+
+    // Check if the Evs size is headerfull or not
+    if (it != std::end(gaEVSPrimaryHeaderFullByteLen))
+    {
+        return true;
+    }
+
+    return false;
+}
 uint32_t ImsMediaAudioUtil::ConvertLenToEVSAudioMode(uint32_t nLen)
 {
     uint32_t i = 0;
@@ -360,15 +392,17 @@ uint32_t ImsMediaAudioUtil::ConvertAmrWbModeToBitrate(uint32_t mode)
     }
 }
 
-uint32_t ImsMediaAudioUtil::GetMaximumAmrMode(int32_t bitmask)
+uint32_t ImsMediaAudioUtil::GetMaximumAmrMode(int32_t codecType, int32_t bitmask)
 {
-    uint32_t maxMode = 0;
+    uint32_t maxMode =
+            (codecType == kAudioCodecAmr) ? kImsAudioAmrMode1220 : kImsAudioAmrWbMode2385;
 
-    for (int32_t i = 0; i <= MAX_AMR_MODE; i++)
+    for (int32_t i = maxMode; i >= 0; i--)
     {
         if (bitmask & (1 << i))
         {
             maxMode = i;
+            break;
         }
     }
 
@@ -476,7 +510,7 @@ kEvsCodecMode ImsMediaAudioUtil::CheckEVSCodecMode(const uint32_t nAudioFrameLen
     }
 }
 
-kRtpPyaloadHeaderMode ImsMediaAudioUtil::ConvertEVSPayloadMode(
+kRtpPayloadHeaderMode ImsMediaAudioUtil::ConvertEVSPayloadMode(
         uint32_t nDataSize, kEvsCodecMode* pEVSCodecMode, uint32_t* pEVSCompactId)
 {
     uint32_t i = 0;
@@ -491,7 +525,7 @@ kRtpPyaloadHeaderMode ImsMediaAudioUtil::ConvertEVSPayloadMode(
         {
             *pEVSCodecMode = kEvsCodecModePrimary;
             *pEVSCompactId = i;
-            return kRtpPyaloadHeaderModeEvsCompact;
+            return kRtpPayloadHeaderModeEvsCompact;
         }
     }
 
@@ -502,14 +536,14 @@ kRtpPyaloadHeaderMode ImsMediaAudioUtil::ConvertEVSPayloadMode(
         {
             *pEVSCodecMode = kEvsCodecModeAmrIo;
             *pEVSCompactId = i;
-            return kRtpPyaloadHeaderModeEvsCompact;
+            return kRtpPayloadHeaderModeEvsCompact;
         }
     }
 
     // TODO : need to check ID...
     *pEVSCodecMode = kEvsCodecModePrimary;
     *pEVSCompactId = EVS_COMPACT_PAYLOAD_MAX_NUM;
-    return kRtpPyaloadHeaderModeEvsHeaderFull;
+    return kRtpPayloadHeaderModeEvsHeaderFull;
 }
 
 kEvsBandwidth ImsMediaAudioUtil::FindMaxEvsBandwidthFromRange(const int32_t EvsBandwidthRange)
@@ -534,4 +568,33 @@ kEvsBandwidth ImsMediaAudioUtil::FindMaxEvsBandwidthFromRange(const int32_t EvsB
     {
         return kEvsBandwidthNone;
     }
+}
+
+ImsMediaSubType ImsMediaAudioUtil::GetAmrFrameType(
+        const int32_t codecType, const uint32_t frameTypeIndex, const uint32_t size)
+{
+    ImsMediaSubType subType = MEDIASUBTYPE_AUDIO_NORMAL;
+    if (codecType == kAudioCodecAmr)
+    {
+        if (size == 0 || frameTypeIndex == kImsAudioAmrModeNoData)
+        {
+            subType = MEDIASUBTYPE_AUDIO_NODATA;
+        }
+        else if (frameTypeIndex == kImsAudioAmrModeSID)
+        {
+            subType = MEDIASUBTYPE_AUDIO_SID;
+        }
+    }
+    else if (codecType == kAudioCodecAmrWb)
+    {
+        if (size == 0 || frameTypeIndex == kImsAudioAmrWbModeNoData)
+        {
+            subType = MEDIASUBTYPE_AUDIO_NODATA;
+        }
+        else if (frameTypeIndex == kImsAudioAmrWbModeSID)
+        {
+            subType = MEDIASUBTYPE_AUDIO_SID;
+        }
+    }
+    return subType;
 }

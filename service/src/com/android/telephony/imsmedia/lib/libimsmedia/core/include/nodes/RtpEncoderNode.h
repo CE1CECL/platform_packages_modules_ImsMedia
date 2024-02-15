@@ -19,6 +19,7 @@
 
 #include <BaseNode.h>
 #include <IRtpSession.h>
+#include <RtpContextParams.h>
 #include <RtpHeaderExtension.h>
 #include <mutex>
 
@@ -30,13 +31,15 @@ public:
     virtual kBaseNodeId GetNodeId();
     virtual ImsMediaResult Start();
     virtual void Stop();
-    virtual void ProcessData();
-    virtual bool IsRunTime();
+    virtual void OnDataFromFrontNode(ImsMediaSubType subtype, uint8_t* data, uint32_t size,
+            uint32_t timestamp, bool mark, uint32_t seq,
+            ImsMediaSubType dataType = ImsMediaSubType::MEDIASUBTYPE_UNDEFINED,
+            uint32_t arrivalTime = 0);
     virtual bool IsSourceNode();
     virtual void SetConfig(void* config);
     virtual bool IsSameConfig(void* config);
     // IRtpEncoderListener method
-    virtual void OnRtpPacket(unsigned char* pData, uint32_t nSize);
+    virtual void OnRtpPacket(unsigned char* data, uint32_t nSize);
 
     /**
      * @brief Set the local ip address and port number
@@ -63,18 +66,30 @@ public:
      */
     void SetRtpHeaderExtension(std::list<RtpHeaderExtension>* listExtension);
 
+    /**
+     * @brief Sets RTP stack with params such as SSRC, sequence number, timestamp, etc. RTP Packets
+     * sent after this call will follow the new params set.
+     *
+     * @param rtpContextParams holds the rtp parameters such as ssrc, timestamp,
+     * sequence number, etc.
+     */
+    void SetRtpContext(RtpContextParams& rtpContextParams);
+
+    void GetRtpContext(RtpContextParams& rtpContextParams);
+
 private:
-    bool ProcessAudioData(ImsMediaSubType subtype, uint8_t* pData, uint32_t nDataSize);
-    void ProcessVideoData(ImsMediaSubType subtype, uint8_t* pData, uint32_t nDataSize,
-            uint32_t timestamp, bool mark);
-    void ProcessTextData(ImsMediaSubType subtype, uint8_t* pData, uint32_t nDataSize,
-            uint32_t timestamp, bool mark);
+    void ProcessAudioData(
+            ImsMediaSubType subtype, uint8_t* data, uint32_t size, uint32_t timestamp);
+    void ProcessVideoData(
+            ImsMediaSubType subtype, uint8_t* data, uint32_t size, uint32_t timestamp, bool mark);
+    void ProcessTextData(
+            ImsMediaSubType subtype, uint8_t* data, uint32_t size, uint32_t timestamp, bool mark);
 
     IRtpSession* mRtpSession;
     std::mutex mMutex;
     RtpAddress mLocalAddress;
     RtpAddress mPeerAddress;
-    bool mDTMFMode;
+    bool mDtmfMode;
     bool mMark;
     uint32_t mPrevTimestamp;
     int8_t mSamplingRate;
@@ -88,6 +103,8 @@ private:
     int8_t mRedundantPayload;
     int8_t mRedundantLevel;
     std::list<RtpHeaderExtensionInfo> mListRtpExtension;
+    RtpContextParams mRtpContextParams;
+    int32_t mArrivalTime;
 };
 
 #endif
