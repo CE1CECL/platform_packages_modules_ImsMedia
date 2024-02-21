@@ -37,5 +37,4 @@ android_library {
             "frameworks/native/aidl/gui",
         ],
     },
-    platform_apis: true,
 }
