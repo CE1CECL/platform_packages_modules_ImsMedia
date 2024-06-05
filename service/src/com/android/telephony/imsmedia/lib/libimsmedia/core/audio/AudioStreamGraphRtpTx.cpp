@@ -20,6 +20,7 @@
 #include <AudioConfig.h>
 #include <IAudioSourceNode.h>
 #include <DtmfEncoderNode.h>
+#include <DtmfSenderNode.h>
 #include <AudioRtpPayloadEncoderNode.h>
 #include <RtpEncoderNode.h>
 #include <SocketWriterNode.h>
@@ -111,6 +112,21 @@ ImsMediaResult AudioStreamGraphRtpTx::update(RtpConfig* config)
             mConfig->getMediaDirection() == RtpConfig::MEDIA_DIRECTION_INACTIVE)
     {
         IMLOGI0("[update] pause TX");
+        RtpContextParams rtpContextParams = config->getRtpContextParams();
+        int32_t accessNetwork = pConfig->getAccessNetwork();
+
+        if (accessNetwork != ACCESS_NETWORK_IWLAN &&
+                mConfig->getMediaDirection() == RtpConfig::MEDIA_DIRECTION_NO_FLOW)
+        {
+            for (auto& node : mListNodeStarted)
+            {
+                if (node != nullptr && node->GetNodeId() == kNodeIdRtpEncoder)
+                {
+                    reinterpret_cast<RtpEncoderNode*>(node)->GetRtpContext(rtpContextParams);
+                    pConfig->setRtpContextParams(rtpContextParams);
+                }
+            }
+        }
         return stop();
     }
 
@@ -190,15 +206,26 @@ bool AudioStreamGraphRtpTx::createDtmfGraph(RtpConfig* config, BaseNode* rtpEnco
         mConfig = new AudioConfig(*audioConfig);
     }
 
-    BaseNode* pDtmfEncoderNode = new DtmfEncoderNode(mCallback);
-    pDtmfEncoderNode->SetMediaType(IMS_MEDIA_AUDIO);
-    pDtmfEncoderNode->SetConfig(audioConfig);
-    AddNode(pDtmfEncoderNode);
-    mListDtmfNodes.push_back(pDtmfEncoderNode);
+    BaseNode* dtmfEncoderNode = new DtmfEncoderNode(mCallback);
+    dtmfEncoderNode->SetMediaType(IMS_MEDIA_AUDIO);
+    dtmfEncoderNode->SetConfig(audioConfig);
+    dtmfEncoderNode->SetSchedulerCallback(
+            std::static_pointer_cast<StreamSchedulerCallback>(mScheduler));
+    AddNode(dtmfEncoderNode);
+    mListDtmfNodes.push_back(dtmfEncoderNode);
+
+    BaseNode* dtmfSenderNode = new DtmfSenderNode(mCallback);
+    dtmfSenderNode->SetMediaType(IMS_MEDIA_AUDIO);
+    dtmfSenderNode->SetConfig(audioConfig);
+    dtmfSenderNode->SetSchedulerCallback(
+            std::static_pointer_cast<StreamSchedulerCallback>(mScheduler));
+    dtmfEncoderNode->ConnectRearNode(dtmfSenderNode);
+    AddNode(dtmfSenderNode);
+    mListDtmfNodes.push_back(dtmfSenderNode);
 
     if (rtpEncoderNode != nullptr)
     {
-        pDtmfEncoderNode->ConnectRearNode(rtpEncoderNode);
+        dtmfSenderNode->ConnectRearNode(rtpEncoderNode);
     }
 
     return true;
@@ -235,13 +262,13 @@ bool AudioStreamGraphRtpTx::sendDtmf(char digit, int duration)
     return false;
 }
 
-void AudioStreamGraphRtpTx::processCmr(const uint32_t cmr)
+void AudioStreamGraphRtpTx::processCmr(const uint32_t cmrType, const uint32_t cmrDefine)
 {
     BaseNode* node = findNode(kNodeIdAudioSource);
 
     if (node != nullptr)
     {
-        (reinterpret_cast<IAudioSourceNode*>(node))->ProcessCmr(cmr);
+        (reinterpret_cast<IAudioSourceNode*>(node))->ProcessCmr(cmrType, cmrDefine);
     }
 }
 

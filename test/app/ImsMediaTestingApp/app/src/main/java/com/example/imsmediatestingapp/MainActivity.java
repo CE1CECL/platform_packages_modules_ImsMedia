@@ -32,6 +32,7 @@ import android.telephony.imsmedia.MediaQualityStatus;
 import android.telephony.imsmedia.MediaQualityThreshold;
 import android.telephony.imsmedia.RtcpConfig;
 import android.telephony.imsmedia.RtpConfig;
+import android.telephony.imsmedia.RtpReceptionStats;
 import android.telephony.imsmedia.TextConfig;
 import android.telephony.imsmedia.TextSessionCallback;
 import android.telephony.imsmedia.VideoConfig;
@@ -205,6 +206,7 @@ public class MainActivity extends AppCompatActivity {
     private TextureView mTextureDisplay;
     private Surface mPreviewSurface;
     private Surface mDisplaySurface;
+    private int mDelay;
 
     /**
      * Enum of the CodecType from android.hardware.radio.ims.media.CodecType with
@@ -652,6 +654,7 @@ public class MainActivity extends AppCompatActivity {
         mAudioSession = null;
         mVideoSession = null;
         mTextSession = null;
+        mDelay = 100;
     }
 
     @Override
@@ -761,6 +764,7 @@ public class MainActivity extends AppCompatActivity {
                     JITTER_THRESHOLD, NOTIFY_STATUS);
             mAudioSession.setMediaQualityThreshold(threshold);
             mAudioSession.modifySession(mAudioConfig);
+            mAudioSession.requestRtpReceptionStats(3000);
 
             AudioManager audioManager = getSystemService(AudioManager.class);
             audioManager.setMode(AudioManager.MODE_IN_CALL);
@@ -806,6 +810,19 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onCallQualityChanged(CallQuality callQuality) {
             Log.d(TAG, "onCallQualityChanged, callQuality=" + callQuality);
+            Log.d(TAG, "onCallQualityChanged, discardRate="
+                    + (double) callQuality.getNumDroppedRtpPackets()
+                    / callQuality.getNumRtpPacketsReceived() * 100);
+            Log.d(TAG, "onCallQualityChanged, lossRate="
+                    + (double) callQuality.getNumRtpPacketsNotReceived()
+                    / callQuality.getNumRtpPacketsReceived() * 100);
+            Log.d(TAG, "onCallQualityChanged, maxPlayoutDelay="
+                    + (double) callQuality.getMaxPlayoutDelayMillis());
+        }
+
+        @Override
+        public void notifyRtpReceptionStats(final RtpReceptionStats stats) {
+            Log.d(TAG, "notifyRtpReceptionStats, RtpReceptionStats=" + stats);
         }
     }
 
@@ -1538,7 +1555,7 @@ public class MainActivity extends AppCompatActivity {
                 .setCodecType(codecType)
                 .setBitrate(1000)
                 .setRedundantPayload((byte) TEXT_REDUNDANT_PAYLOAD_TYPE_NUMBER)
-                .setRedundantLevel((byte) 3)
+                .setRedundantLevel((byte) 2)
                 .setKeepRedundantLevel(true)
                 .build();
         return config;
@@ -1613,7 +1630,7 @@ public class MainActivity extends AppCompatActivity {
             case CodecType.AMR_WB:
                 int amrMode = determineCommonCodecSettings(localDevice.getAmrModes(),
                     remoteDevice.getAmrModes(), AMR_MODE_ORDER);
-                amrParams = createAmrParams(amrMode, true, 0);
+                amrParams = createAmrParams(amrMode, false, 0);
                 break;
 
             case CodecType.EVS:
@@ -1627,7 +1644,7 @@ public class MainActivity extends AppCompatActivity {
 
             case -1:
                 return createAudioConfig(CodecType.AMR_WB,
-                    createAmrParams(AmrMode.AMR_MODE_4, true, 0), null);
+                    createAmrParams(AmrMode.AMR_MODE_4, false, 0), null);
         }
 
         return createAudioConfig(selectedCodec, amrParams, evsParams);
@@ -2018,7 +2035,7 @@ public class MainActivity extends AppCompatActivity {
                 .setCodecModeRequest((byte) 15)
                 .build();
 
-                amrParams = createAmrParams(mBottomSheetAudioCodecSettings.getAmrMode(), true, 0);
+                amrParams = createAmrParams(mBottomSheetAudioCodecSettings.getAmrMode(), false, 0);
                 config = createAudioConfig(getRemoteAudioSocketAddress(),
                         getRemoteAudioRtcpConfig(), audioCodec, amrParams, evsParams);
                 Log.d(TAG, String.format("AudioConfig switched to Codec: %s\t Params: %s",
@@ -2726,6 +2743,19 @@ public class MainActivity extends AppCompatActivity {
             extensions.add(extension2);
             Log.d(TAG, "[sendHeaderExtension] extension size=" + extensions.size());
             mAudioSession.sendHeaderExtension(extensions);
+        }
+    }
+
+    /**
+     * Send the parameter to adjust the audio delay
+     */
+    public void adjustDelay(View btn) {
+        if (mAudioSession != null) {
+            mDelay = (mDelay + 20) % 240;
+            if (mDelay < 60) {
+                mDelay = 60;
+            }
+            mAudioSession.adjustDelay(mDelay);
         }
     }
 }

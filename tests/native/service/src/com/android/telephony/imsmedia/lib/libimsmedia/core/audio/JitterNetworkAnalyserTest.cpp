@@ -26,9 +26,11 @@ public:
     {
         mAnalyzer = nullptr;
         mMinJitterBufferSize = 4;
-        mMaxJitterBufferSize = 9;
-        mReduceThreshold = 80;
+        mMaxJitterBufferSize = 11;
+        mIncThreshold = 200;
+        mDecThreshold = 200;
         mStepSize = 1;
+        mWeight = 2.0f;
     }
     virtual ~JitterNetworkAnalyserTest() {}
 
@@ -36,14 +38,16 @@ protected:
     JitterNetworkAnalyser* mAnalyzer;
     uint32_t mMinJitterBufferSize;
     uint32_t mMaxJitterBufferSize;
-    uint32_t mReduceThreshold;
+    uint32_t mIncThreshold;
+    uint32_t mDecThreshold;
     uint32_t mStepSize;
+    double mWeight;
 
     virtual void SetUp() override
     {
         mAnalyzer = new JitterNetworkAnalyser();
         mAnalyzer->SetMinMaxJitterBufferSize(mMinJitterBufferSize, mMaxJitterBufferSize);
-        mAnalyzer->SetJitterOptions(mReduceThreshold, mStepSize, 2.5f);
+        mAnalyzer->SetJitterOptions(mIncThreshold, mDecThreshold, mStepSize, mWeight);
     }
 
     virtual void TearDown() override { delete mAnalyzer; }
@@ -60,7 +64,8 @@ TEST_F(JitterNetworkAnalyserTest, TestLowJitter)
     for (int32_t i = 0; i < kNumFrames; i++)
     {
         timestamp += TEST_FRAME_INTERVAL;
-        arrivalTime += (TEST_FRAME_INTERVAL + kJitter);
+        int32_t jitter = i % 2 == 0 ? kJitter : -kJitter;
+        arrivalTime += (TEST_FRAME_INTERVAL + jitter);
 
         if (i == 0)
         {
@@ -68,10 +73,8 @@ TEST_F(JitterNetworkAnalyserTest, TestLowJitter)
         }
         else
         {
-            EXPECT_EQ(mAnalyzer->CalculateTransitTimeDifference(timestamp, arrivalTime), kJitter);
+            EXPECT_EQ(mAnalyzer->CalculateTransitTimeDifference(timestamp, arrivalTime), jitter);
         }
-
-        mAnalyzer->UpdateBaseTimestamp(timestamp, arrivalTime);
 
         currentJitterBufferSize =
                 mAnalyzer->GetNextJitterBufferSize(currentJitterBufferSize, timestamp);
@@ -88,15 +91,12 @@ TEST_F(JitterNetworkAnalyserTest, TestHighJitter)
     int32_t arrivalTime = 0;
     int32_t timestamp = 0;
     uint32_t currentJitterBufferSize = mMinJitterBufferSize;
-
     uint32_t statusInterval = 0;
 
     for (int32_t i = 0; i < kNumFrames; i++)
     {
         timestamp += TEST_FRAME_INTERVAL;
         arrivalTime += (TEST_FRAME_INTERVAL + kJitter);
-
-        uint32_t nextJitterSizeTruth = currentJitterBufferSize;
 
         if (i == 0)
         {
@@ -105,22 +105,14 @@ TEST_F(JitterNetworkAnalyserTest, TestHighJitter)
         else
         {
             EXPECT_EQ(mAnalyzer->CalculateTransitTimeDifference(timestamp, arrivalTime), kJitter);
-            nextJitterSizeTruth = currentJitterBufferSize + mStepSize;
-        }
-
-        mAnalyzer->UpdateBaseTimestamp(timestamp, arrivalTime);
-
-        if (nextJitterSizeTruth >= mMaxJitterBufferSize)
-        {
-            nextJitterSizeTruth = mMaxJitterBufferSize;
         }
 
         currentJitterBufferSize =
                 mAnalyzer->GetNextJitterBufferSize(currentJitterBufferSize, statusInterval);
         statusInterval += kInterval;
-
-        EXPECT_EQ(currentJitterBufferSize, nextJitterSizeTruth);
     }
+
+    EXPECT_EQ(currentJitterBufferSize, mMaxJitterBufferSize);
 }
 
 TEST_F(JitterNetworkAnalyserTest, TestJitterBufferDecrease)
@@ -137,9 +129,8 @@ TEST_F(JitterNetworkAnalyserTest, TestJitterBufferDecrease)
     for (int32_t i = 0; i < kNumFrames; i++)
     {
         timestamp += TEST_FRAME_INTERVAL;
-        arrivalTime += (TEST_FRAME_INTERVAL + kJitter);
-
-        uint32_t nextJitterSizeTruth = currentJitterBufferSize;
+        int32_t jitter = i % 2 == 0 ? kJitter : -kJitter;
+        arrivalTime += (TEST_FRAME_INTERVAL + jitter);
 
         if (i == 0)
         {
@@ -147,25 +138,13 @@ TEST_F(JitterNetworkAnalyserTest, TestJitterBufferDecrease)
         }
         else
         {
-            EXPECT_EQ(mAnalyzer->CalculateTransitTimeDifference(timestamp, arrivalTime), kJitter);
-        }
-
-        if (i != 0 && i % 2 == 1)  // decrease is done every the other step
-        {
-            nextJitterSizeTruth = currentJitterBufferSize - mStepSize;
-        }
-
-        mAnalyzer->UpdateBaseTimestamp(timestamp, arrivalTime);
-
-        if (nextJitterSizeTruth <= mMinJitterBufferSize)
-        {
-            nextJitterSizeTruth = mMinJitterBufferSize;
+            EXPECT_EQ(mAnalyzer->CalculateTransitTimeDifference(timestamp, arrivalTime), jitter);
         }
 
         currentJitterBufferSize =
                 mAnalyzer->GetNextJitterBufferSize(currentJitterBufferSize, statusInterval);
         statusInterval += kInterval;
-
-        EXPECT_EQ(currentJitterBufferSize, nextJitterSizeTruth);
     }
+
+    EXPECT_EQ(currentJitterBufferSize, mMinJitterBufferSize);
 }

@@ -74,8 +74,6 @@ public:
     virtual void OnEvent(uint32_t event, uint32_t param) = 0;
 };
 
-#define MAX_NUM_PAYLOAD_PARAM 4
-
 /*!
  * @class        IRtpSession
  */
@@ -99,7 +97,7 @@ public:
             int32_t subTxPayloadTypeNum = 0, int32_t subRxPayloadTypeNum = 0,
             int32_t subSamplingRate = 0);
     void SetRtcpInterval(int32_t nInterval);
-    void StartRtp();
+    void StartRtp(bool bResetSsrc = false);
     void StopRtp();
     void StartRtcp(bool bSendRtcpBye = false);
     void StopRtcp();
@@ -107,13 +105,12 @@ public:
             bool mark, uint32_t nTimeDiff, RtpHeaderExtensionInfo* extensionInfo = nullptr);
     bool ProcRtpPacket(uint8_t* pData, uint32_t nDataSize);
     bool ProcRtcpPacket(uint8_t* pData, uint32_t nDataSize);
-    void OnTimer();
+    // Sends RTP and RTCP statistics to listeners.
+    void OnRtpStatsTimerExpired();
     void SendRtcpXr(uint8_t* pPayload, uint32_t nSize);
     bool SendRtcpFeedback(int32_t type, uint8_t* pFic, uint32_t nFicSize);
-    ImsMediaType getMediaType();
-    void increaseRefCounter();
-    void decreaseRefCounter();
-    uint32_t getRefCounter();
+    void SetRtpContext(uint32_t ssrc, uint32_t timestamp, uint16_t sequenceNumber);
+    void GetRtpContext(uint32_t& ssrc, uint32_t& timestamp, uint16_t& sequenceNumber);
     // receive Rtp packet, send it to rtp tx node
     virtual int OnRtpPacket(unsigned char* pData, RtpSvc_Length wLen);
     // receive Rtcp packet, send it to rtcp node
@@ -136,7 +133,7 @@ private:
     IRtcpEncoderListener* mRtcpEncoderListener;
     IRtcpDecoderListener* mRtcpDecoderListener;
     // payload parameter
-    tRtpSvc_SetPayloadParam mPayloadParam[MAX_NUM_PAYLOAD_PARAM];
+    tRtpSvc_SetPayloadParam mPayloadParam[RTP_MAX_PAYLOAD_TYPE];
     uint32_t mNumPayloadParam;
     // Rtp configure
     uint32_t mLocalRtpSsrc;
@@ -159,6 +156,12 @@ private:
     int32_t mRttd;
     std::mutex mutexDecoder;
     std::mutex mutexEncoder;
+
+    ImsMediaType getMediaType();
+    void increaseRefCounter();
+    void decreaseRefCounter();
+    uint32_t getRefCounter();
+    void addPayloadType(RtpDt_UInt32 payloadType, RtpDt_UInt32 samplingRate);
 };
 
 #endif

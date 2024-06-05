@@ -51,6 +51,7 @@ ImsMediaResult AudioStreamGraphRtpRx::create(RtpConfig* config)
     (static_cast<SocketReaderNode*>(pNodeSocketReader))->SetLocalAddress(localAddress);
     (static_cast<SocketReaderNode*>(pNodeSocketReader))->SetProtocolType(kProtocolRtp);
     pNodeSocketReader->SetConfig(config);
+    pNodeSocketReader->Prepare();
     AddNode(pNodeSocketReader);
 
     BaseNode* pNodeRtpDecoder = new RtpDecoderNode(mCallback);
@@ -108,24 +109,15 @@ ImsMediaResult AudioStreamGraphRtpRx::update(RtpConfig* config)
     }
 
     ImsMediaResult ret = RESULT_NOT_READY;
+    bool needsToStart = false;
 
     if (mGraphState == kStreamStateRunning)
     {
-        mScheduler->Stop();
-
-        for (auto& node : mListNodeStarted)
-        {
-            IMLOGD1("[update] update node[%s]", node->GetNodeName());
-            ret = node->UpdateConfig(mConfig);
-
-            if (ret != RESULT_SUCCESS)
-            {
-                IMLOGE2("[update] error in update node[%s], ret[%d]", node->GetNodeName(), ret);
-            }
-        }
-        mScheduler->Start();
+        stop();
+        needsToStart = true;
     }
-    else if (mGraphState == kStreamStateCreated)
+
+    if (mGraphState == kStreamStateCreated)
     {
         for (auto& node : mListNodeToStart)
         {
@@ -147,6 +139,11 @@ ImsMediaResult AudioStreamGraphRtpRx::update(RtpConfig* config)
         return start();
     }
 
+    if (needsToStart)
+    {
+        return start();
+    }
+
     return ret;
 }
 
@@ -165,4 +162,24 @@ ImsMediaResult AudioStreamGraphRtpRx::start()
 
     // not started
     return RESULT_SUCCESS;
+}
+
+void AudioStreamGraphRtpRx::processCmr(const uint32_t cmrType, const uint32_t cmrDefine)
+{
+    BaseNode* node = findNode(kNodeIdAudioPlayer);
+
+    if (node != nullptr)
+    {
+        (reinterpret_cast<IAudioPlayerNode*>(node))->ProcessCmr(cmrType, cmrDefine);
+    }
+}
+
+void AudioStreamGraphRtpRx::adjustDelay(const int32_t delayMs)
+{
+    BaseNode* node = findNode(kNodeIdAudioPlayer);
+
+    if (node != nullptr)
+    {
+        (reinterpret_cast<IAudioPlayerNode*>(node))->AdjustDelay(delayMs);
+    }
 }

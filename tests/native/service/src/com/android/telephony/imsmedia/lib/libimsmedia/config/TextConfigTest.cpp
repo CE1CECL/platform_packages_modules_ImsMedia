@@ -37,7 +37,7 @@ const int32_t kRtcpXrBlockTypes = 0;
 const int32_t kCodecType = TextConfig::TEXT_T140_RED;
 const int32_t kBitrate = 100;
 const int8_t kRedundantPayload = 102;
-const int8_t kRedundantLevel = 3;
+const int8_t kRedundantLevel = 2;
 const bool kKeepRedundantLevel = true;
 
 class TextConfigTest : public ::testing::Test
@@ -96,7 +96,8 @@ TEST_F(TextConfigTest, TestParcel)
 
 TEST_F(TextConfigTest, TestAssign)
 {
-    TextConfig testConfig = config1;
+    TextConfig testConfig;
+    testConfig = config1;
     EXPECT_EQ(config1, testConfig);
 
     TextConfig* testConfig2 = new TextConfig(config1);

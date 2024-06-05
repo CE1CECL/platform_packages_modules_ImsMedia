@@ -82,6 +82,11 @@ public abstract class RtpConfig implements Parcelable {
     private byte mRxPayloadTypeNumber;
     private byte mTxPayloadTypeNumber;
     private byte mSamplingRateKHz;
+    /** Holds RTP parameters required to maintain RTP stream continuity */
+    @Nullable
+    private RtpContextParams mRtpContextParams;
+    @Nullable
+    private AnbrMode mAnbrMode;
 
     /** @hide */
     RtpConfig(int type, Parcel in) {
@@ -94,6 +99,9 @@ public abstract class RtpConfig implements Parcelable {
         mRxPayloadTypeNumber = in.readByte();
         mTxPayloadTypeNumber = in.readByte();
         mSamplingRateKHz = in.readByte();
+        mRtpContextParams = in.readParcelable(RtpContextParams.class.getClassLoader(),
+                RtpContextParams.class);
+        mAnbrMode = in.readParcelable(AnbrMode.class.getClassLoader(), AnbrMode.class);
     }
 
     /** @hide **/
@@ -107,6 +115,8 @@ public abstract class RtpConfig implements Parcelable {
         mRxPayloadTypeNumber = builder.mRxPayloadTypeNumber;
         mTxPayloadTypeNumber = builder.mTxPayloadTypeNumber;
         mSamplingRateKHz = builder.mSamplingRateKHz;
+        mRtpContextParams = builder.mRtpContextParams;
+        mAnbrMode = builder.mAnbrMode;
     }
 
     private @NonNull InetSocketAddress readSocketAddress(final Parcel in) {
@@ -187,6 +197,22 @@ public abstract class RtpConfig implements Parcelable {
         this.mSamplingRateKHz = mSamplingRateKHz;
     }
 
+    public RtpContextParams getRtpContextParams() {
+        return mRtpContextParams;
+    }
+
+    public void setRtpContextParams(final RtpContextParams mRtpContextParams) {
+        this.mRtpContextParams = mRtpContextParams;
+    }
+
+    public AnbrMode getAnbrMode() {
+        return mAnbrMode;
+    }
+
+    public void setAnbrMode(final AnbrMode mAnbrMode) {
+        this.mAnbrMode = mAnbrMode;
+    }
+
     @NonNull
     @Override
     public String toString() {
@@ -198,13 +224,16 @@ public abstract class RtpConfig implements Parcelable {
             + ", mRxPayloadTypeNumber=" + mRxPayloadTypeNumber
             + ", mTxPayloadTypeNumber=" + mTxPayloadTypeNumber
             + ", mSamplingRateKHz=" + mSamplingRateKHz
+            + ", mRtpContextParams=" + mRtpContextParams
+            + ", mAnbrMode=" + mAnbrMode
             + " }";
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(mDirection, mAccessNetwork, mRemoteRtpAddress, mRtcpConfig,
-            mDscp, mRxPayloadTypeNumber, mTxPayloadTypeNumber, mSamplingRateKHz);
+            mDscp, mRxPayloadTypeNumber, mTxPayloadTypeNumber, mSamplingRateKHz, mRtpContextParams,
+            mAnbrMode);
     }
 
     @Override
@@ -226,7 +255,9 @@ public abstract class RtpConfig implements Parcelable {
                 && mDscp == s.mDscp
                 && mRxPayloadTypeNumber == s.mRxPayloadTypeNumber
                 && mTxPayloadTypeNumber == s.mTxPayloadTypeNumber
-                && mSamplingRateKHz == s.mSamplingRateKHz);
+                && mSamplingRateKHz == s.mSamplingRateKHz
+                && Objects.equals(mRtpContextParams, s.mRtpContextParams)
+                && Objects.equals(mAnbrMode, s.mAnbrMode));
     }
 
     /**
@@ -258,6 +289,8 @@ public abstract class RtpConfig implements Parcelable {
         dest.writeByte(mRxPayloadTypeNumber);
         dest.writeByte(mTxPayloadTypeNumber);
         dest.writeByte(mSamplingRateKHz);
+        dest.writeParcelable(mRtpContextParams, 0);
+        dest.writeParcelable(mAnbrMode, 0);
     }
 
     public static final @NonNull Parcelable.Creator<RtpConfig>
@@ -296,6 +329,9 @@ public abstract class RtpConfig implements Parcelable {
         private byte mRxPayloadTypeNumber;
         private byte mTxPayloadTypeNumber;
         private byte mSamplingRateKHz;
+        @Nullable
+        private RtpContextParams mRtpContextParams;
+        private AnbrMode mAnbrMode;
 
         AbstractBuilder() {}
 
@@ -377,6 +413,23 @@ public abstract class RtpConfig implements Parcelable {
             this.mSamplingRateKHz = samplingRateKHz;
             return self();
         }
+
+        /**
+         * Sets RTP parameters required for RTP context transfer
+         * @param rtpContextParams parameter fields of a {@link RtpContextParams}
+         */
+        public T setRtpContextParams(final RtpContextParams rtpContextParams) {
+            this.mRtpContextParams = rtpContextParams;
+            return self();
+        }
+
+        /**
+         * Sets AnbrMode information
+         * @param anbrMode The codec mode of the current negotiated codec (either Evs or Amr)
+         */
+        public T setAnbrMode(final AnbrMode anbrMode) {
+            this.mAnbrMode = anbrMode;
+            return self();
+        }
     }
 }
-

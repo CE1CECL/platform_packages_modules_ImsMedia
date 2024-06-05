@@ -18,15 +18,18 @@ package com.android.telephony.imsmedia;
 
 import android.content.res.AssetManager;
 import android.os.Parcel;
+import android.os.Process;
 import android.util.ArrayMap;
-import android.util.Log;
 import android.view.Surface;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.android.telephony.imsmedia.util.Log;
+
 /** JNI interface class to send message to libimsmediajni */
 public class JNIImsMediaService {
     private static final String TAG = "JNIImsMediaService";
+    private static final int THREAD_PRIORITY_REALTIME = -20;
     public static JNIImsMediaService sService = null;
     private final Object mLock = new Object();
 
@@ -161,7 +164,7 @@ public class JNIImsMediaService {
      * @return 1 if it is success to send data, -1 when it fails
      */
     public static int sendData2Java(final int sessionId, final byte[] baData) {
-        Log.d(TAG, "sendData2Java() - sessionId=" + sessionId);
+        Log.dc(TAG, "sendData2Java() - sessionId=" + sessionId);
         JNIImsMediaListener listener = getListener(sessionId);
         if (listener == null) {
             Log.e(TAG, "No listener :: sessionId=" + sessionId);
@@ -180,6 +183,15 @@ public class JNIImsMediaService {
         return 1;
     }
 
+    /** Elevates the priority of audio thread to THREAD_PRIORITY_REALTIME. Increase in thead
+     * priority will ensure AOC and JitterBuffer calls are made consistent every 20msecs.
+     *
+     * @param threadId is the id of the thread whose priority should to be increased.
+     */
+    public static void setAudioThreadPriority(int threadId) {
+        Log.d(TAG, "setAudioThreadPriority. tid:" + threadId);
+        Process.setThreadPriority(threadId, THREAD_PRIORITY_REALTIME);
+    }
 
     /** local shared libimsmediajni library */
     static {

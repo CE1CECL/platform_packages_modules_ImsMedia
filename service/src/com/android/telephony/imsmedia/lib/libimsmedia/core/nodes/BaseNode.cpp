@@ -30,6 +30,7 @@ static std::vector<NODE_ID_PAIR> vectorNodeId{
         std::make_pair(kNodeIdAudioSource, "AudioSource"),
         std::make_pair(kNodeIdAudioPlayer, "AudioPlayer"),
         std::make_pair(kNodeIdDtmfEncoder, "DtmfEncoder"),
+        std::make_pair(kNodeIdDtmfSender, "DtmfSender"),
         std::make_pair(kNodeIdAudioPayloadEncoder, "AudioPayloadEncoder"),
         std::make_pair(kNodeIdAudioPayloadDecoder, "AudioPayloadDecoder"),
         std::make_pair(kNodeIdVideoSource, "VideoSource"),
@@ -63,7 +64,7 @@ void BaseNode::SetSessionCallback(BaseSessionCallback* callback)
     mCallback = callback;
 }
 
-void BaseNode::SetSchedulerCallback(std::shared_ptr<StreamSchedulerCallback>& callback)
+void BaseNode::SetSchedulerCallback(const std::shared_ptr<StreamSchedulerCallback>& callback)
 {
     mScheduler = callback;
 }
@@ -96,12 +97,18 @@ void BaseNode::DisconnectNodes()
 
 void BaseNode::ClearDataQueue()
 {
+    IMLOGD1("[ClearDataQueue] queue size[%d]", mDataQueue.GetCount());
     mDataQueue.Clear();
 }
 
 kBaseNodeId BaseNode::GetNodeId()
 {
     return kNodeIdUnknown;
+}
+
+bool BaseNode::Prepare()
+{
+    return RESULT_SUCCESS;
 }
 
 ImsMediaResult BaseNode::Start()
@@ -121,6 +128,11 @@ ImsMediaResult BaseNode::ProcessStart()
 {
     IMLOGW0("[ProcessStart] Error - base method");
     return RESULT_NOT_SUPPORTED;
+}
+
+bool BaseNode::IsRunTime()
+{
+    return true;
 }
 
 bool BaseNode::IsRunTimeStart()
@@ -191,7 +203,7 @@ const char* BaseNode::GetNodeName()
         }
     }
 
-    return nullptr;
+    return "NodeUnknown";
 }
 
 void BaseNode::SetMediaType(ImsMediaType eType)
@@ -292,7 +304,7 @@ void BaseNode::SendDataToRearNode(ImsMediaSubType subtype, uint8_t* pData, uint3
         uint32_t nTimestamp, bool bMark, uint32_t nSeqNum, ImsMediaSubType nDataType,
         uint32_t arrivalTime)
 {
-    bool nNeedRunCount = false;
+    bool needRunCount = false;
 
     for (auto& node : mListRearNodes)
     {
@@ -301,14 +313,14 @@ void BaseNode::SendDataToRearNode(ImsMediaSubType subtype, uint8_t* pData, uint3
             node->OnDataFromFrontNode(
                     subtype, pData, nDataSize, nTimestamp, bMark, nSeqNum, nDataType, arrivalTime);
 
-            if (node->IsRunTime() == false)
+            if (!node->IsRunTime())
             {
-                nNeedRunCount = true;
+                needRunCount = true;
             }
         }
     }
 
-    if (nNeedRunCount == true && mScheduler != nullptr)
+    if (needRunCount && mScheduler != nullptr)
     {
         mScheduler->onAwakeScheduler();
     }

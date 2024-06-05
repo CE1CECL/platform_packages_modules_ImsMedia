@@ -27,7 +27,7 @@ RtpEncoderNode::RtpEncoderNode(BaseSessionCallback* callback) :
         BaseNode(callback)
 {
     mRtpSession = nullptr;
-    mDTMFMode = false;
+    mDtmfMode = false;
     mMark = false;
     mPrevTimestamp = 0;
     mSamplingRate = 0;
@@ -86,6 +86,13 @@ ImsMediaResult RtpEncoderNode::Start()
     {
         mRtpSession->SetRtpPayloadParam(mRtpPayloadTx, mRtpPayloadRx, mSamplingRate * 1000,
                 mRtpTxDtmfPayload, mRtpRxDtmfPayload, mDtmfSamplingRate * 1000);
+
+        if (mRtpContextParams.getSequenceNumber() >= 0)
+        {
+            // Set the next sequence number to use by RTP stack.
+            mRtpSession->SetRtpContext(mRtpContextParams.getSsrc(),
+                    mRtpContextParams.getTimestamp(), mRtpContextParams.getSequenceNumber() + 1);
+        }
     }
     else if (mMediaType == IMS_MEDIA_VIDEO)
     {
@@ -102,10 +109,17 @@ ImsMediaResult RtpEncoderNode::Start()
         {
             mRtpSession->SetRtpPayloadParam(mRtpPayloadTx, mRtpPayloadRx, mSamplingRate * 1000);
         }
+
+        if (mRtpContextParams.getSequenceNumber() > 0)
+        {
+            // Set the next sequence number to use by RTP stack.
+            mRtpSession->SetRtpContext(mRtpContextParams.getSsrc(),
+                    mRtpContextParams.getTimestamp(), mRtpContextParams.getSequenceNumber() + 1);
+        }
     }
 
     mRtpSession->StartRtp();
-    mDTMFMode = false;
+    mDtmfMode = false;
     mMark = true;
     mPrevTimestamp = 0;
 #ifdef DEBUG_JITTER_GEN_SIMULATION_DELAY
@@ -122,60 +136,40 @@ ImsMediaResult RtpEncoderNode::Start()
 void RtpEncoderNode::Stop()
 {
     IMLOGD1("[Stop] type[%d]", mMediaType);
-    std::lock_guard<std::mutex> guard(mMutex);
 
     if (mRtpSession)
     {
         mRtpSession->StopRtp();
     }
 
+    mRtpContextParams.setDefaultConfig();
+
     ClearDataQueue();
     mNodeState = kNodeStateStopped;
 }
 
-void RtpEncoderNode::ProcessData()
+void RtpEncoderNode::OnDataFromFrontNode(ImsMediaSubType subtype, uint8_t* data, uint32_t size,
+        uint32_t timestamp, bool mark, uint32_t /*seq*/, ImsMediaSubType /*dataType*/,
+        uint32_t arrivalTime)
 {
-    std::lock_guard<std::mutex> guard(mMutex);
-
     if (mNodeState != kNodeStateRunning)
     {
         return;
     }
 
-    ImsMediaSubType subtype;
-    uint8_t* data = nullptr;
-    uint32_t size = 0;
-    uint32_t timestamp = 0;
-    bool mark = false;
-    uint32_t seq = 0;
-    ImsMediaSubType datatype;
-    uint32_t arrivalTime = 0;
-
-    if (GetData(&subtype, &data, &size, &timestamp, &mark, &seq, &datatype, &arrivalTime))
+    if (mMediaType == IMS_MEDIA_AUDIO)
     {
-        if (mMediaType == IMS_MEDIA_AUDIO)
-        {
-            if (!ProcessAudioData(subtype, data, size))
-            {
-                return;
-            }
-        }
-        else if (mMediaType == IMS_MEDIA_VIDEO)
-        {
-            ProcessVideoData(subtype, data, size, timestamp, mark);
-        }
-        else if (mMediaType == IMS_MEDIA_TEXT)
-        {
-            ProcessTextData(subtype, data, size, timestamp, mark);
-        }
-
-        DeleteData();
+        mArrivalTime = arrivalTime;
+        ProcessAudioData(subtype, data, size, timestamp);
     }
-}
-
-bool RtpEncoderNode::IsRunTime()
-{
-    return false;
+    else if (mMediaType == IMS_MEDIA_VIDEO)
+    {
+        ProcessVideoData(subtype, data, size, timestamp, mark);
+    }
+    else if (mMediaType == IMS_MEDIA_TEXT)
+    {
+        ProcessTextData(subtype, data, size, timestamp, mark);
+    }
 }
 
 bool RtpEncoderNode::IsSourceNode()
@@ -202,6 +196,14 @@ void RtpEncoderNode::SetConfig(void* config)
         mRtpTxDtmfPayload = pConfig->getTxDtmfPayloadTypeNumber();
         mRtpRxDtmfPayload = pConfig->getRxDtmfPayloadTypeNumber();
         mDtmfSamplingRate = pConfig->getDtmfsamplingRateKHz();
+
+        RtpContextParams rtpContextParams = pConfig->getRtpContextParams();
+
+        if (pConfig->getAccessNetwork() == ACCESS_NETWORK_IWLAN &&
+                          rtpContextParams.getSequenceNumber() >= 0)
+        {
+            SetRtpContext(rtpContextParams);
+        }
     }
     else if (mMediaType == IMS_MEDIA_VIDEO)
     {
@@ -221,6 +223,14 @@ void RtpEncoderNode::SetConfig(void* config)
         mRtpPayloadRx = pConfig->getRxPayloadTypeNumber();
         mRedundantPayload = pConfig->getRedundantPayload();
         mRedundantLevel = pConfig->getRedundantLevel();
+
+        RtpContextParams rtpContextParams = pConfig->getRtpContextParams();
+
+        if (pConfig->getAccessNetwork() == ACCESS_NETWORK_IWLAN &&
+                            rtpContextParams.getSequenceNumber() > 0)
+        {
+            SetRtpContext(rtpContextParams);
+        }
     }
 
     IMLOGD2("[SetConfig] peer Ip[%s], port[%d]", mPeerAddress.ipAddress, mPeerAddress.port);
@@ -238,6 +248,7 @@ bool RtpEncoderNode::IsSameConfig(void* config)
         AudioConfig* pConfig = reinterpret_cast<AudioConfig*>(config);
         return (mPeerAddress ==
                         RtpAddress(pConfig->getRemoteAddress().c_str(), pConfig->getRemotePort()) &&
+                mRtpContextParams == pConfig->getRtpContextParams() &&
                 mSamplingRate == pConfig->getSamplingRateKHz() &&
                 mRtpPayloadTx == pConfig->getTxPayloadTypeNumber() &&
                 mRtpPayloadRx == pConfig->getRxPayloadTypeNumber() &&
@@ -260,6 +271,7 @@ bool RtpEncoderNode::IsSameConfig(void* config)
         TextConfig* pConfig = reinterpret_cast<TextConfig*>(config);
         return (mPeerAddress ==
                         RtpAddress(pConfig->getRemoteAddress().c_str(), pConfig->getRemotePort()) &&
+                mRtpContextParams == pConfig->getRtpContextParams() &&
                 mSamplingRate == pConfig->getSamplingRateKHz() &&
                 mRtpPayloadTx == pConfig->getTxPayloadTypeNumber() &&
                 mRtpPayloadRx == pConfig->getRxPayloadTypeNumber() &&
@@ -272,7 +284,8 @@ bool RtpEncoderNode::IsSameConfig(void* config)
 
 void RtpEncoderNode::OnRtpPacket(unsigned char* data, uint32_t nSize)
 {
-    SendDataToRearNode(MEDIASUBTYPE_RTPPACKET, data, nSize, 0, 0, 0);
+    SendDataToRearNode(
+            MEDIASUBTYPE_RTPPACKET, data, nSize, 0, 0, 0, MEDIASUBTYPE_UNDEFINED, mArrivalTime);
 }
 
 void RtpEncoderNode::SetLocalAddress(const RtpAddress& address)
@@ -417,42 +430,37 @@ void RtpEncoderNode::SetRtpHeaderExtension(std::list<RtpHeaderExtension>* listEx
     delete[] extensionData;
 }
 
-bool RtpEncoderNode::ProcessAudioData(ImsMediaSubType subtype, uint8_t* data, uint32_t size)
+void RtpEncoderNode::ProcessAudioData(
+        ImsMediaSubType subtype, uint8_t* data, uint32_t size, uint32_t timestamp)
 {
-    uint32_t currentTimestamp;
+    std::lock_guard<std::mutex> guard(mMutex);
+
     uint32_t timeDiff;
     uint32_t timestampDiff;
 
     if (subtype == MEDIASUBTYPE_DTMFSTART)
     {
         IMLOGD0("[ProcessAudioData] SetDTMF mode true");
-        mDTMFMode = true;
+        mDtmfMode = true;
         mMark = true;
     }
     else if (subtype == MEDIASUBTYPE_DTMFEND)
     {
         IMLOGD0("[ProcessAudioData] SetDTMF mode false");
-        mDTMFMode = false;
+        mDtmfMode = false;
         mMark = true;
     }
     else if (subtype == MEDIASUBTYPE_DTMF_PAYLOAD)
     {
-        if (mDTMFMode)
+        if (mDtmfMode)
         {
-            currentTimestamp = ImsMediaTimer::GetTimeInMilliSeconds();
-            timeDiff = currentTimestamp - mPrevTimestamp;
-
-            if (timeDiff < 20)
-            {
-                return false;
-            }
-
-            mMark ? mDtmfTimestamp = currentTimestamp : timeDiff = 0;
-            mPrevTimestamp = currentTimestamp;
+            timeDiff = timestamp - mPrevTimestamp;
+            mMark ? mDtmfTimestamp = timestamp : timeDiff = 0;
+            mPrevTimestamp = timestamp;
             timestampDiff = timeDiff * mSamplingRate;
 
             IMLOGD_PACKET3(IM_PACKET_LOG_RTP,
-                    "[ProcessAudioData] dtmf payload, size[%u], TS[%u], diff[%d]", size,
+                    "[ProcessAudioData] dtmf payload, size[%u], TS[%u], diff[%u]", size,
                     mDtmfTimestamp, timestampDiff);
             mRtpSession->SendRtpPacket(
                     mRtpTxDtmfPayload, data, size, mDtmfTimestamp, mMark, timestampDiff);
@@ -461,32 +469,10 @@ bool RtpEncoderNode::ProcessAudioData(ImsMediaSubType subtype, uint8_t* data, ui
     }
     else  // MEDIASUBTYPE_RTPPAYLOAD
     {
-        if (mDTMFMode == false)
+        if (!mDtmfMode)
         {
-            currentTimestamp = ImsMediaTimer::GetTimeInMilliSeconds();
-
-            if (mPrevTimestamp == 0)
-            {
-                timeDiff = 0;
-                mPrevTimestamp = currentTimestamp;
-            }
-            else
-            {
-                timeDiff = ((currentTimestamp - mPrevTimestamp) + 5) / 20 * 20;
-
-                if (timeDiff > 20)
-                {
-                    mPrevTimestamp = currentTimestamp;
-                }
-                else if (timeDiff == 0)
-                {
-                    return false;
-                }
-                else
-                {
-                    mPrevTimestamp += timeDiff;
-                }
-            }
+            timeDiff = mPrevTimestamp == 0 ? 0 : ((timestamp - mPrevTimestamp) + 10) / 20 * 20;
+            mPrevTimestamp = timestamp;
 
             RtpPacket* packet = new RtpPacket();
             packet->rtpDataType = kRtpDataTypeNormal;
@@ -494,19 +480,19 @@ bool RtpEncoderNode::ProcessAudioData(ImsMediaSubType subtype, uint8_t* data, ui
                     kCollectPacketInfo, kStreamRtpTx, reinterpret_cast<uint64_t>(packet));
 
             timestampDiff = timeDiff * mSamplingRate;
-            IMLOGD_PACKET3(IM_PACKET_LOG_RTP, "[ProcessAudioData] size[%u], TS[%u], diff[%d]", size,
-                    currentTimestamp, timestampDiff);
+            IMLOGD_PACKET3(IM_PACKET_LOG_RTP, "[ProcessAudioData] size[%u], TS[%u], diff[%u]", size,
+                    timestamp, timestampDiff);
 
             if (!mListRtpExtension.empty())
             {
-                mRtpSession->SendRtpPacket(mRtpPayloadTx, data, size, currentTimestamp, mMark,
+                mRtpSession->SendRtpPacket(mRtpPayloadTx, data, size, timestamp, mMark,
                         timestampDiff, &mListRtpExtension.front());
                 mListRtpExtension.pop_front();
             }
             else
             {
                 mRtpSession->SendRtpPacket(
-                        mRtpPayloadTx, data, size, currentTimestamp, mMark, timestampDiff);
+                        mRtpPayloadTx, data, size, timestamp, mMark, timestampDiff);
             }
 
             if (mMark)
@@ -515,8 +501,6 @@ bool RtpEncoderNode::ProcessAudioData(ImsMediaSubType subtype, uint8_t* data, ui
             }
         }
     }
-
-    return true;
 }
 
 void RtpEncoderNode::ProcessVideoData(
@@ -553,16 +537,7 @@ void RtpEncoderNode::ProcessTextData(
             "[ProcessTextData] subtype[%d], size[%d], timestamp[%d], mark[%d]", subtype, size,
             timestamp, mark);
 
-    uint32_t timeDiff;
-
-    if (mMark == true)
-    {
-        timeDiff = 0;
-    }
-    else
-    {
-        timeDiff = timestamp - mPrevTimestamp;
-    }
+    uint32_t timeDiff = mMark ? 0 : timestamp - mPrevTimestamp;
 
     if (subtype == MEDIASUBTYPE_BITSTREAM_T140)
     {
@@ -582,4 +557,25 @@ void RtpEncoderNode::ProcessTextData(
 
     mMark = false;
     mPrevTimestamp = timestamp;
+}
+
+void RtpEncoderNode::SetRtpContext(RtpContextParams& rtpContextParams)
+{
+    mRtpContextParams = rtpContextParams;
+}
+
+void RtpEncoderNode::GetRtpContext(RtpContextParams& rtpContextParams)
+{
+    uint32_t ssrc = 0;
+    uint32_t timestamp = 0;
+    uint16_t seqNumber = 0;
+
+    if (mRtpSession != nullptr)
+    {
+        mRtpSession->GetRtpContext(ssrc, timestamp, seqNumber);
+    }
+
+    rtpContextParams.setSsrc(ssrc);
+    rtpContextParams.setTimestamp(timestamp);
+    rtpContextParams.setSequenceNumber(seqNumber);
 }

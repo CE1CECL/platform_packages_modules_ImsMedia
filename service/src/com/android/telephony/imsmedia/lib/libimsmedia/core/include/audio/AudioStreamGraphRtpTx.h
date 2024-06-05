@@ -35,7 +35,7 @@ public:
      *
      * @param config AudioConfig for setting the parameters for nodes
      * @param rtpEncoderNode The RtpEncoderNode instance to connect as a rear node after the
-     * DtmfEncoderNode, if it is null, no dtmf packet will be delivered to RtpEncoderNode.
+     * DtmfSenderNode, if it is null, no dtmf packet will be delivered to RtpEncoderNode.
      * @return true Returns when the graph created without error
      * @return false Returns when the given parameters are invalid.
      */
@@ -54,9 +54,10 @@ public:
     /**
      * @brief Set the cmr value to change the audio mode
      *
-     * @param cmr The codec mode request value to change
+     * @param cmrType The 3 bit of cmr type for EVS and just cmr bit for AMR/AMR-WB codec
+     * @param cmrDefine The 4 bit of cmr define code for EVS and not used for AMR/AMR-WB codec
      */
-    void processCmr(const uint32_t cmr);
+    void processCmr(const uint32_t cmrType, const uint32_t cmrDefine = 0);
 
     /**
      * @brief Send rtp header extension to the audio rtp
