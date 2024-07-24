@@ -63,7 +63,6 @@ void AudioJitterBuffer::Reset()
     mLastPlayedSeqNum = 0;
     mLastPlayedTimestamp = 0;
     mFirstFrameReceived = false;
-    mNextJitterBufferSize = mCurrJitterBufferSize;
     mDtxPlayed = false;
     mDtxReceived = false;
     mWaiting = true;
@@ -73,6 +72,7 @@ void AudioJitterBuffer::Reset()
     mPrevGetTime = 0;
     mListVoiceFrames.clear();
     mListDropVoiceFrames.clear();
+    mAdditionalDelay = 0;
 }
 
 void AudioJitterBuffer::ClearBuffer()
@@ -134,7 +134,7 @@ void AudioJitterBuffer::SetJitterOptions(
 
 void AudioJitterBuffer::SetEvsRedundantFrameOffset(const int32_t offset)
 {
-    IMLOGD1("[SetEvsRedundantFrameOffset] offset[%d]", offset);
+    IMLOGD1("[SetEvsRedundantFrameOffset] offset=%d", offset);
     mEvsRedundantFrameOffset = offset;
 }
 
@@ -156,13 +156,15 @@ void AudioJitterBuffer::Add(ImsMediaSubType subtype, uint8_t* pbBuffer, uint32_t
 
     if (subtype == MEDIASUBTYPE_REFRESHED)
     {
-        // nBufferSize is ssrc value
+        std::lock_guard<std::mutex> guard(mMutex);
         mSsrc = nBufferSize;
-        mTimeStarted = ImsMediaTimer::GetTimeInMilliSeconds();
+        mTimeStarted = arrivalTime;
         mJitterAnalyzer.Reset();
+        mCurrJitterBufferSize = mInitJitterBufferSize;
+        mNextJitterBufferSize = mCurrJitterBufferSize;
         mDataQueue.Add(&currEntry);
 
-        IMLOGI2("[Add] ssrc[%u], startTime[%d]", mSsrc, mTimeStarted);
+        IMLOGI2("[Add] ssrc=%u, startTime=%d", mSsrc, mTimeStarted);
         return;
     }
 
@@ -193,13 +195,14 @@ void AudioJitterBuffer::Add(ImsMediaSubType subtype, uint8_t* pbBuffer, uint32_t
     packet->seqNum = nSeqNum;
     packet->jitter = jitter;
     packet->arrival = arrivalTime;
+    packet->timestamp = nTimestamp;
     mCallback->SendEvent(kCollectPacketInfo, kStreamRtpRx, reinterpret_cast<uint64_t>(packet));
 
     std::lock_guard<std::mutex> guard(mMutex);
 
     IMLOGD_PACKET8(IM_PACKET_LOG_JITTER,
-            "[Add] seq[%d], mark[%d], TS[%d], size[%d], jitter[%d], queue[%d], playingDiff[%d], "
-            "arrival[%d]",
+            "[Add] seq=%d, mark=%d, TS=%d, size=%d, jitter=%d, queue=%d, playingDiff=%d, "
+            "arrival=%d",
             nSeqNum, bMark, nTimestamp, nBufferSize, jitter, mDataQueue.GetCount() + 1,
             mCurrPlayingTS - nTimestamp, arrivalTime);
 
@@ -249,6 +252,15 @@ void AudioJitterBuffer::Add(ImsMediaSubType subtype, uint8_t* pbBuffer, uint32_t
             mListVoiceFrames.pop_front();
         }
     }
+
+    // update jitter buffer size
+    if (!mWaiting && mUpdatedDelay == 0)
+    {
+        uint32_t nextJitterBufferSize =
+                mJitterAnalyzer.GetNextJitterBufferSize(mCurrJitterBufferSize, arrivalTime);
+        mCheckUpdateJitterPacketCnt = 0;
+        mUpdatedDelay = nextJitterBufferSize - mCurrJitterBufferSize;
+    }
 }
 
 bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_t* pnDataSize,
@@ -257,15 +269,8 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
 {
     std::lock_guard<std::mutex> guard(mMutex);
 
-    if (mPrevGetTime == 0)
-    {
-        mPrevGetTime = currentTime;
-    }
-    else
-    {
-        IMLOGD_PACKET1(IM_PACKET_LOG_JITTER, "[Get] time diff[%d]", currentTime - mPrevGetTime);
-        mPrevGetTime = currentTime;
-    }
+    IMLOGD_PACKET1(IM_PACKET_LOG_JITTER, "[Get] time diff=%d", currentTime - mPrevGetTime);
+    mPrevGetTime = currentTime;
 
     DataEntry* pEntry = nullptr;
     bool bForceToPlay = false;
@@ -283,34 +288,12 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
         }
     }
 
-    // update jitter buffer size
-    if (!mWaiting && mUpdatedDelay == 0 &&
-            ((mDtxPlayed && mDataQueue.Get(&pEntry) &&
-                     pEntry->eDataType != MEDIASUBTYPE_AUDIO_SID) ||
-                    mCheckUpdateJitterPacketCnt * FRAME_INTERVAL > JITTER_BUFFER_UPDATE_INTERVAL))
-    {
-        uint32_t nextJitterBufferSize =
-                mJitterAnalyzer.GetNextJitterBufferSize(mCurrJitterBufferSize, currentTime);
-        mCheckUpdateJitterPacketCnt = 0;
-        mUpdatedDelay = nextJitterBufferSize - mCurrJitterBufferSize;
-
-        if (mDataQueue.GetCount() < mMinJitterBufferSize && mUpdatedDelay < 0)
-        {
-            IMLOGD_PACKET1(
-                    IM_PACKET_LOG_JITTER, "[Get] ignore decrease[%d]", mDataQueue.GetCount());
-            mUpdatedDelay = 0;
-        }
-        else
-        {
-            mCurrJitterBufferSize = nextJitterBufferSize;
-        }
-    }
-
     // increase delay
     if (!mWaiting && mDtxPlayed && mUpdatedDelay > 0)
     {
-        IMLOGD2("[Get] increase delay[%d], curTS[%d]", mUpdatedDelay, mCurrPlayingTS);
+        IMLOGD2("[Get] increase delay=%d, curTS=%d", mUpdatedDelay, mCurrPlayingTS);
         mUpdatedDelay--;
+        mCurrJitterBufferSize++;
         return false;
     }
 
@@ -318,9 +301,10 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
     if (!mWaiting && mDataQueue.Get(&pEntry) && pEntry->eDataType == MEDIASUBTYPE_AUDIO_SID &&
             mUpdatedDelay < 0)
     {
-        IMLOGD3("[Get] decrease delay[%d], curTS[%u], queue[%u]", mUpdatedDelay, mCurrPlayingTS,
+        IMLOGD3("[Get] decrease delay=%d, curTS=%u, queue=%u", mUpdatedDelay, mCurrPlayingTS,
                 mDataQueue.GetCount());
         mUpdatedDelay++;
+        mCurrJitterBufferSize--;
         mCurrPlayingTS += FRAME_INTERVAL;
     }
 
@@ -332,13 +316,13 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
     {
         if (mCurrJitterBufferSize == mMaxJitterBufferSize)
         {
-            IMLOGD1("[Get] resync, drop rate[%u]", dropRate);
+            IMLOGD1("[Get] resync, drop rate=%u", dropRate);
             mWaiting = true;
             mTimeStarted = currentTime;
         }
         else
         {
-            IMLOGD1("[Get] increase delay by drop rate[%u]", dropRate);
+            IMLOGD1("[Get] increase delay by drop rate=%u", dropRate);
             mCurrPlayingTS -= FRAME_INTERVAL;
             mCurrJitterBufferSize++;
         }
@@ -348,7 +332,7 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
 
     if (mDataQueue.GetCount() == 0)
     {
-        IMLOGD_PACKET1(IM_PACKET_LOG_JITTER, "[Get] fail - empty, curTS[%u]", mCurrPlayingTS);
+        IMLOGD_PACKET1(IM_PACKET_LOG_JITTER, "[Get] fail - empty, curTS=%u", mCurrPlayingTS);
 
         if (!mWaiting)
         {
@@ -359,7 +343,7 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
     }
     else if (mDataQueue.Get(&pEntry) && mWaiting)
     {
-        if (currentTime - mTimeStarted < mInitJitterBufferSize * FRAME_INTERVAL)
+        if (currentTime - mTimeStarted + ALLOWABLE_ERROR < mCurrJitterBufferSize * FRAME_INTERVAL)
         {
             if (psubtype)
                 *psubtype = MEDIASUBTYPE_UNDEFINED;
@@ -376,16 +360,17 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
             if (pDataType)
                 *pDataType = MEDIASUBTYPE_UNDEFINED;
 
-            IMLOGD_PACKET4(IM_PACKET_LOG_JITTER,
-                    "[Get] Wait - seq[%u], CurrJBSize[%u], delay[%u], QueueCount[%u]",
-                    pEntry->nSeqNum, mCurrJitterBufferSize, currentTime - pEntry->arrivalTime,
-                    GetCount());
+            IMLOGD_PACKET5(IM_PACKET_LOG_JITTER,
+                    "[Get] Wait - timeStarted=%d, seq=%u, CurrJBSize=%u, delay=%u, "
+                    "QueueCount=%u",
+                    mTimeStarted, pEntry->nSeqNum, mCurrJitterBufferSize,
+                    currentTime - pEntry->arrivalTime, GetCount());
             return false;
         }
         else
         {
             // resync when the audio frame stacked over the current jitter buffer size
-            Resync(mInitJitterBufferSize + 1);
+            Resync(mCurrJitterBufferSize + 1);
             mWaiting = false;
         }
     }
@@ -397,10 +382,11 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
         mListJitterBufferSize.pop_front();
     }
 
-    // discard duplicated packet
-    if (mDataQueue.Get(&pEntry) && mFirstFrameReceived && pEntry->nSeqNum == mLastPlayedSeqNum)
+    // report duplicated packet
+    while (mDataQueue.Get(&pEntry) && mFirstFrameReceived && pEntry->nSeqNum == mLastPlayedSeqNum &&
+            pEntry->nTimestamp == mLastPlayedTimestamp)
     {
-        IMLOGD6("[Get] duplicate - curTS[%u], seq[%d], mark[%d], TS[%u], size[%d], queue[%d]",
+        IMLOGD6("[Get] duplicate - curTS=%u, seq=%d, mark=%d, TS=%u, size=%d, queue=%d",
                 mCurrPlayingTS, pEntry->nSeqNum, pEntry->bMark, pEntry->nTimestamp,
                 pEntry->nBufferSize, mDataQueue.GetCount());
         CollectRxRtpStatus(pEntry->nSeqNum, kRtpStatusDuplicated);
@@ -419,11 +405,12 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
 
     // adjust the playing timestamp
     if (mDataQueue.Get(&pEntry) && pEntry->nTimestamp != mCurrPlayingTS &&
-            ((mCurrPlayingTS - ALLOWABLE_ERROR) < pEntry->nTimestamp) &&
-            (pEntry->nTimestamp < (mCurrPlayingTS + ALLOWABLE_ERROR)))
+            ((mCurrPlayingTS - ALLOWABLE_ERROR) <= pEntry->nTimestamp) &&
+            (pEntry->nTimestamp <= (mCurrPlayingTS + ALLOWABLE_ERROR)))
     {
+        IMLOGD3("[Get] sync playing curTS=%u, TS=%u, seq=%d", mCurrPlayingTS, pEntry->nTimestamp,
+                pEntry->nSeqNum);
         mCurrPlayingTS = pEntry->nTimestamp;
-        IMLOGD2("[Get] sync playing curTS[%u], seq[%d]", mCurrPlayingTS, pEntry->nSeqNum);
     }
 
     // delete late arrival
@@ -437,11 +424,12 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
         {
             CountLostFrames(pEntry->nSeqNum, mLastPlayedSeqNum);
             mLastPlayedSeqNum = pEntry->nSeqNum;
+            mLastPlayedTimestamp = pEntry->nTimestamp;
         }
 
-        IMLOGD_PACKET3(IM_PACKET_LOG_JITTER,
-                "[Get] delete late arrival seq[%d], curTS[%u], dtx[%d]", pEntry->nSeqNum,
-                mCurrPlayingTS, mDtxPlayed);
+        IMLOGD_PACKET4(IM_PACKET_LOG_JITTER,
+                "[Get] delete late arrival, dtx=%d, seq=%d, curTS=%u, TS=%u", mDtxPlayed,
+                pEntry->nSeqNum, mCurrPlayingTS, pEntry->nTimestamp);
 
         if (mPreservedDtx != nullptr)
         {
@@ -505,13 +493,14 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
         }
 
         IMLOGD_PACKET7(IM_PACKET_LOG_JITTER,
-                "[Get] OK - dtx[%d], curTS[%u], seq[%u], TS[%u], size[%u], delay[%u], queue[%u]",
+                "[Get] OK, dtx=%d, curTS=%u, seq=%u, TS=%u, size=%u, delay=%u, curSize=%u",
                 mDtxPlayed, mCurrPlayingTS, pEntry->nSeqNum, pEntry->nTimestamp,
-                pEntry->nBufferSize, currentTime - pEntry->arrivalTime, mDataQueue.GetCount());
+                pEntry->nBufferSize, currentTime - pEntry->arrivalTime, mCurrJitterBufferSize);
 
         mCurrPlayingTS = pEntry->nTimestamp + FRAME_INTERVAL;
         mFirstFrameReceived = true;
         mLastPlayedSeqNum = pEntry->nSeqNum;
+        mLastPlayedTimestamp = pEntry->nTimestamp;
         CollectRxRtpStatus(pEntry->nSeqNum, kRtpStatusNormal);
         CollectJitterBufferStatus(
                 mCurrJitterBufferSize * FRAME_INTERVAL, mMaxJitterBufferSize * FRAME_INTERVAL);
@@ -552,10 +541,11 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
                 *pDataType = pEntry->eDataType;
 
             IMLOGD_PACKET3(IM_PACKET_LOG_JITTER,
-                    "[Get] preserved frame, dtx[%d], curTS[%u], current[%u]", mDtxPlayed,
+                    "[Get] OK, preserved frame, dtx=%d, curTS=%u, current=%u", mDtxPlayed,
                     mCurrPlayingTS, currentTime);
 
             mLastPlayedSeqNum = pEntry->nSeqNum;
+            mLastPlayedTimestamp = pEntry->nTimestamp;
             mCurrPlayingTS += FRAME_INTERVAL;
             return true;
         }
@@ -574,7 +564,7 @@ bool AudioJitterBuffer::Get(ImsMediaSubType* psubtype, uint8_t** ppData, uint32_
         if (pDataType)
             *pDataType = MEDIASUBTYPE_UNDEFINED;
 
-        IMLOGD_PACKET3(IM_PACKET_LOG_JITTER, "[Get] fail - dtx[%d], curTS[%u], current[%u]",
+        IMLOGD_PACKET3(IM_PACKET_LOG_JITTER, "[Get] fail - dtx=%d, curTS=%u, current=%u",
                 mDtxPlayed, mCurrPlayingTS, currentTime);
 
         mCurrPlayingTS += FRAME_INTERVAL;
@@ -597,9 +587,9 @@ void AudioJitterBuffer::Resync(uint32_t spareFrames)
 
     while (mDataQueue.Get(&entry) && GetCount() > spareFrames)
     {
-        IMLOGD6("[Resync] state[%d], seq[%d], TS[%d], dtx[%d], queue[%d], spareFrames[%d]",
-                mWaiting, entry->nSeqNum, entry->nTimestamp,
-                entry->eDataType == MEDIASUBTYPE_AUDIO_SID, GetCount(), spareFrames);
+        IMLOGD6("[Resync] state=%d, seq=%d, TS=%d, dtx=%d, queue=%d, spareFrames=%d", mWaiting,
+                entry->nSeqNum, entry->nTimestamp, entry->eDataType == MEDIASUBTYPE_AUDIO_SID,
+                GetCount(), spareFrames);
 
         if (entry->eDataType != MEDIASUBTYPE_AUDIO_SID)
         {
@@ -609,6 +599,7 @@ void AudioJitterBuffer::Resync(uint32_t spareFrames)
         if (!mWaiting)
         {
             mLastPlayedSeqNum = entry->nSeqNum;
+            mLastPlayedTimestamp = entry->nTimestamp;
         }
 
         mDataQueue.Delete();
@@ -629,7 +620,7 @@ void AudioJitterBuffer::CountLostFrames(int32_t currentSeq, int32_t lastSeq)
     if (lostGap > 1 && lostGap < SEQ_OUTLIER_THRESHOLD)
     {
         uint16_t lostSeq = lastSeq + 1;
-        IMLOGD_PACKET2(IM_PACKET_LOG_JITTER, "[CountLostFrames] lost seq[%u], num[%u]", lostSeq,
+        IMLOGD_PACKET2(IM_PACKET_LOG_JITTER, "[CountLostFrames] lost seq=%u, num=%u", lostSeq,
                 lostGap - 1);
 
         SessionCallbackParameter* param =
@@ -641,14 +632,14 @@ void AudioJitterBuffer::CountLostFrames(int32_t currentSeq, int32_t lastSeq)
 uint32_t AudioJitterBuffer::GetDropVoiceRateInDuration(uint32_t duration, uint32_t currentTime)
 {
     uint32_t numVoice = std::count_if(mListVoiceFrames.begin(), mListVoiceFrames.end(),
-            [=](uint32_t frameTime)
+            [duration, currentTime, this](uint32_t frameTime)
             {
                 return ((currentTime - frameTime + mCurrJitterBufferSize * FRAME_INTERVAL) <=
                         duration);
             });
 
     uint32_t numDrop = std::count_if(mListDropVoiceFrames.begin(), mListDropVoiceFrames.end(),
-            [=](uint32_t frameTime)
+            [duration, currentTime](uint32_t frameTime)
             {
                 return (currentTime - frameTime <= duration);
             });
@@ -663,8 +654,6 @@ uint32_t AudioJitterBuffer::GetDropVoiceRateInDuration(uint32_t duration, uint32
 
 void AudioJitterBuffer::CollectRxRtpStatus(int32_t seq, kRtpPacketStatus status)
 {
-    IMLOGD_PACKET2(IM_PACKET_LOG_JITTER, "[CollectRxRtpStatus] seq[%d], status[%d]", seq, status);
-
     if (mCallback != nullptr)
     {
         SessionCallbackParameter* param =
@@ -675,9 +664,6 @@ void AudioJitterBuffer::CollectRxRtpStatus(int32_t seq, kRtpPacketStatus status)
 
 void AudioJitterBuffer::CollectJitterBufferStatus(int32_t currSize, int32_t maxSize)
 {
-    IMLOGD_PACKET2(IM_PACKET_LOG_JITTER, "[CollectJitterBufferStatus] currSize[%d], maxSize[%d]",
-            currSize, maxSize);
-
     if (mCallback != nullptr)
     {
         mCallback->SendEvent(kCollectJitterBufferSize, currSize, maxSize);
@@ -710,7 +696,7 @@ bool AudioJitterBuffer::GetPartialRedundancyFrame(
     {
         *entry = nullptr;
         IMLOGD_PACKET1(IM_PACKET_LOG_JITTER,
-                "[GetPartialRedundancyFrame] lostSeq[%d] Redundant Frame not found", lostSeq);
+                "[GetPartialRedundancyFrame] lostSeq=%d Redundant Frame not found", lostSeq);
         return false;
     }
 
@@ -718,7 +704,7 @@ bool AudioJitterBuffer::GetPartialRedundancyFrame(
     {
         *entry = nullptr;
         IMLOGD_PACKET1(IM_PACKET_LOG_JITTER,
-                "[GetPartialRedundancyFrame] lostSeq[%d] Redundant Frame is SID", lostSeq);
+                "[GetPartialRedundancyFrame] lostSeq=%d Redundant Frame is SID", lostSeq);
         return false;
     }
 
@@ -729,7 +715,7 @@ bool AudioJitterBuffer::GetPartialRedundancyFrame(
         *entry = nullptr;
         IMLOGD_PACKET2(IM_PACKET_LOG_JITTER,
                 "[GetPartialRedundancyFrame] RF not in offset timeframe. \
-                RF_timestamp[%u] LostFrame_timestamp[%u]",
+                RF_timestamp=%u LostFrame_timestamp=%u",
                 tempEntry->nTimestamp, currentTimestamp);
         return false;
     }
@@ -738,14 +724,14 @@ bool AudioJitterBuffer::GetPartialRedundancyFrame(
     {
         *entry = tempEntry;
         IMLOGD_PACKET4(IM_PACKET_LOG_JITTER,
-                "[GetPartialRedundancyFrame] lostSeq[%d] RFSeq[%d], size[%d] , curTS[%u]", lostSeq,
+                "[GetPartialRedundancyFrame] lostSeq=%d RFSeq=%d, size=%d , curTS=%u", lostSeq,
                 tempEntry->nSeqNum, tempEntry->nBufferSize, mCurrPlayingTS);
         return true;
     }
 
     *entry = nullptr;
     IMLOGD_PACKET1(IM_PACKET_LOG_JITTER,
-            "[GetPartialRedundancyFrame] lostSeq[%d] Redundant Frame not found", lostSeq);
+            "[GetPartialRedundancyFrame] lostSeq=%d Redundant Frame not found", lostSeq);
     return false;
 }
 
@@ -761,7 +747,7 @@ bool AudioJitterBuffer::GetNextFrameFirstByte(uint32_t nextSeq, uint8_t* nextFra
                                 ? 1
                                 : 0];
         IMLOGD_PACKET2(IM_PACKET_LOG_JITTER,
-                "[GetNextFrameFirstByte] nextSeq[%d] nextFrameFirstByte[%02X]", pEntry->nSeqNum,
+                "[GetNextFrameFirstByte] nextSeq=%d nextFrameFirstByte[%02X]", pEntry->nSeqNum,
                 nextFrameFirstByte[0]);
         return true;
     }
@@ -786,5 +772,23 @@ bool AudioJitterBuffer::GetRedundantFrame(uint32_t lostSeq, uint8_t** ppData, ui
 
         return true;
     }
+
     return false;
+}
+
+void AudioJitterBuffer::SetAdditionalDelay(const int32_t delayMs)
+{
+    std::lock_guard<std::mutex> guard(mMutex);
+
+    if (!mWaiting && mFirstFrameReceived)
+    {
+        int32_t delayDiff = delayMs - mAdditionalDelay;
+        mAdditionalDelay = delayMs;
+
+        int32_t newDelay = delayDiff / FRAME_INTERVAL;
+        mCurrPlayingTS -= newDelay * FRAME_INTERVAL;
+        mCurrJitterBufferSize += newDelay;
+        IMLOGD3("[SetAdditionalDelay] delay=%d, delayDiff=%d, curSize=%d", delayMs, delayDiff,
+                mCurrJitterBufferSize);
+    }
 }
