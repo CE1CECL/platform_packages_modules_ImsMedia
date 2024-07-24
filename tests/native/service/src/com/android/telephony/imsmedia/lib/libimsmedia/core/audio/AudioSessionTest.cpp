@@ -29,6 +29,9 @@ const int8_t kDscp = 0;
 const int8_t kRxPayload = 96;
 const int8_t kTxPayload = 96;
 const int8_t kSamplingRate = 16;
+// AnbrParam
+const int32_t kAnbrMUplinkMode = 1;
+const int32_t kAnbrMDownlinkMode = 2;
 
 // RtcpConfig
 const android::String8 kCanonicalName("name");
@@ -64,6 +67,7 @@ public:
     AudioSession* session;
     AudioConfig config;
     RtcpConfig rtcp;
+    AnbrMode anbr;
     AmrParams amr;
     EvsParams evs;
     int socketRtpFd;
@@ -95,6 +99,9 @@ protected:
         evs.setUseHeaderFullOnly(kUseHeaderFullOnly);
         evs.setCodecModeRequest(kcodecModeRequest);
 
+        anbr.setAnbrUplinkCodecMode(kAnbrMUplinkMode);
+        anbr.setAnbrDownlinkCodecMode(kAnbrMDownlinkMode);
+
         config.setMediaDirection(kMediaDirection);
         config.setRemoteAddress(kRemoteAddress);
         config.setRemotePort(kRemotePort);
@@ -103,6 +110,7 @@ protected:
         config.setRxPayloadTypeNumber(kRxPayload);
         config.setTxPayloadTypeNumber(kTxPayload);
         config.setSamplingRateKHz(kSamplingRate);
+        config.setAnbrMode(anbr);
         config.setPtimeMillis(kPTimeMillis);
         config.setMaxPtimeMillis(kMaxPtimeMillis);
         config.setDtxEnabled(kDtxEnabled);
@@ -245,6 +253,14 @@ TEST_F(AudioSessionTest, testStartAndHoldResumeWithSameRemoteAddress)
     EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
     EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
     EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    config.setMediaDirection(RtpConfig::MEDIA_DIRECTION_SEND_RECEIVE);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateActive);
+
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
 }
 
 TEST_F(AudioSessionTest, testStartAndHoldResumeWithDifferentRemoteAddress)
@@ -330,6 +346,86 @@ TEST_F(AudioSessionTest, testStartAndAddWithRtcpOff)
 
     config.setRemotePort(20000);
     EXPECT_EQ(session->addGraph(&config, false), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateActive);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+}
+
+TEST_F(AudioSessionTest, testDeactivateActiveSession)
+{
+    session->setLocalEndPoint(socketRtpFd, socketRtcpFd);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateActive);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    EXPECT_EQ(session->deactivate(), true);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+    EXPECT_EQ(session->getState(), kSessionStateSuspended);
+}
+
+TEST_F(AudioSessionTest, testDeactivateSendonlySession)
+{
+    session->setLocalEndPoint(socketRtpFd, socketRtcpFd);
+    config.setMediaDirection(RtpConfig::MEDIA_DIRECTION_SEND_ONLY);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateSending);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    EXPECT_EQ(session->deactivate(), true);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+    EXPECT_EQ(session->getState(), kSessionStateSuspended);
+}
+
+TEST_F(AudioSessionTest, testDeactivateReceiveonlySession)
+{
+    session->setLocalEndPoint(socketRtpFd, socketRtcpFd);
+    config.setMediaDirection(RtpConfig::MEDIA_DIRECTION_RECEIVE_ONLY);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateReceiving);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    EXPECT_EQ(session->deactivate(), true);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+    EXPECT_EQ(session->getState(), kSessionStateSuspended);
+}
+
+TEST_F(AudioSessionTest, testDeactivateAndResumeSession)
+{
+    session->setLocalEndPoint(socketRtpFd, socketRtcpFd);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateActive);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    EXPECT_EQ(session->deactivate(), true);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+    EXPECT_EQ(session->getState(), kSessionStateSuspended);
+
+    config.setMediaDirection(RtpConfig::MEDIA_DIRECTION_INACTIVE);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
+    EXPECT_EQ(session->getState(), kSessionStateSuspended);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);
+    EXPECT_EQ(session->getGraphSize(kStreamRtcp), 1);
+
+    config.setMediaDirection(RtpConfig::MEDIA_DIRECTION_SEND_RECEIVE);
+    EXPECT_EQ(session->startGraph(&config), RESULT_SUCCESS);
     EXPECT_EQ(session->getState(), kSessionStateActive);
     EXPECT_EQ(session->getGraphSize(kStreamRtpTx), 1);
     EXPECT_EQ(session->getGraphSize(kStreamRtpRx), 1);

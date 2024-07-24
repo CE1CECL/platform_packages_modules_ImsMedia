@@ -18,10 +18,12 @@
 #include <ImsMediaAudioSource.h>
 #include <ImsMediaTrace.h>
 #include <ImsMediaAudioUtil.h>
+#include <ImsMediaTimer.h>
 #include <string.h>
 #include <AudioConfig.h>
 #include <RtpConfig.h>
 #include <EvsParams.h>
+#include <AnbrMode.h>
 
 #define MAX_CODEC_EVS_AMR_IO_MODE 9
 
@@ -35,6 +37,7 @@ IAudioSourceNode::IAudioSourceNode(BaseSessionCallback* callback) :
     mRunningCodecMode = 0;
     mFirstFrame = false;
     mMediaDirection = 0;
+    mAnbrUplinkMode = 0;
     mIsOctetAligned = false;
     mIsDtxEnabled = false;
 }
@@ -54,7 +57,7 @@ ImsMediaResult IAudioSourceNode::ProcessStart()
     {
         mAudioSource->SetUplinkCallback(this);
         mAudioSource->SetCodec(mCodecType);
-        mRunningCodecMode = ImsMediaAudioUtil::GetMaximumAmrMode(mCodecMode);
+        mRunningCodecMode = ImsMediaAudioUtil::GetMaximumAmrMode(mCodecType, mCodecMode);
         mAudioSource->SetPtime(mPtime);
         mAudioSource->SetSamplingRate(mSamplingRate * 1000);
         mAudioSource->SetMediaDirection(mMediaDirection);
@@ -70,6 +73,7 @@ ImsMediaResult IAudioSourceNode::ProcessStart()
                     ImsMediaAudioUtil::ConvertEVSModeToBitRate(mRunningCodecMode));
         }
         mAudioSource->SetCodecMode(mRunningCodecMode);
+        IMLOGD1("[ProcessStart] running codec mode: %d", mRunningCodecMode);
 
         if (mAudioSource->Start())
         {
@@ -134,6 +138,14 @@ void IAudioSourceNode::SetConfig(void* config)
         mEvsBandwidth = ImsMediaAudioUtil::FindMaxEvsBandwidthFromRange(
                 pConfig->getEvsParams().getEvsBandwidth());
         mEvsChAwOffset = pConfig->getEvsParams().getChannelAwareMode();
+
+        mAnbrUplinkMode = pConfig->getAnbrMode().getAnbrUplinkCodecMode();
+
+        if (mAnbrUplinkMode != 0 && mCodecMode != mAnbrUplinkMode)
+        {
+            mCodecMode = mAnbrUplinkMode;
+            IMLOGI2("[SetConfig] new codec mode: %d, uplink mode: %d", mCodecMode, mAnbrUplinkMode);
+        }
     }
 
     mMediaDirection = pConfig->getMediaDirection();
@@ -181,8 +193,8 @@ void IAudioSourceNode::onDataFrame(uint8_t* buffer, uint32_t size, int64_t times
 {
     IMLOGD_PACKET3(IM_PACKET_LOG_AUDIO, "[onDataFrame] size[%zu], TS[%ld], flag[%d]", size,
             timestamp, flag);
-    SendDataToRearNode(
-            MEDIASUBTYPE_UNDEFINED, buffer, size, timestamp, !mFirstFrame, MEDIASUBTYPE_UNDEFINED);
+    SendDataToRearNode(MEDIASUBTYPE_UNDEFINED, buffer, size, ImsMediaTimer::GetTimeInMilliSeconds(),
+            !mFirstFrame, 0, MEDIASUBTYPE_UNDEFINED, ImsMediaTimer::GetTimeInMilliSeconds());
 
     if (!mFirstFrame)
     {
@@ -192,7 +204,7 @@ void IAudioSourceNode::onDataFrame(uint8_t* buffer, uint32_t size, int64_t times
 
 void IAudioSourceNode::ProcessCmr(const uint32_t cmrType, const uint32_t cmrDefine)
 {
-    IMLOGD2("[ProcessCmr] cmr type[%d], define[%d]", cmrType, cmrDefine);
+    IMLOGD2("[ProcessCmr] cmr type[%d], cmrDefine[%d]", cmrType, cmrDefine);
 
     if (mAudioSource == nullptr)
     {
@@ -203,7 +215,7 @@ void IAudioSourceNode::ProcessCmr(const uint32_t cmrType, const uint32_t cmrDefi
     {
         if (cmrType == 15)  // change mode to original one
         {
-            int32_t mode = ImsMediaAudioUtil::GetMaximumAmrMode(mCodecMode);
+            int32_t mode = ImsMediaAudioUtil::GetMaximumAmrMode(mCodecType, mCodecMode);
 
             if (mRunningCodecMode != mode)
             {
@@ -215,6 +227,10 @@ void IAudioSourceNode::ProcessCmr(const uint32_t cmrType, const uint32_t cmrDefi
         {
             if (mRunningCodecMode != cmrType)
             {
+                if (cmrType > mRunningCodecMode && mAnbrUplinkMode == 0)
+                {
+                    triggerAnbrQuery(cmrType);
+                }
                 mAudioSource->ProcessCmr(cmrType);
                 mRunningCodecMode = cmrType;
             }
@@ -234,7 +250,14 @@ void IAudioSourceNode::ProcessCmr(const uint32_t cmrType, const uint32_t cmrDefi
         }
         else
         {
-            int mode = MAX_CODEC_EVS_AMR_IO_MODE;
+            // triggering ANBR query- build triggerAnbrQuery (with mode: cmr)
+            int32_t mode = MAX_CODEC_EVS_AMR_IO_MODE;
+
+            if ((cmrDefine + mode) > mRunningCodecMode && mAnbrUplinkMode == 0)
+            {
+                triggerAnbrQuery(mode + cmrDefine);
+            }
+
             switch (cmrType)
             {
                 case kEvsCmrCodeTypeNb:
@@ -308,4 +331,19 @@ void IAudioSourceNode::ProcessCmr(const uint32_t cmrType, const uint32_t cmrDefi
             mAudioSource->ProcessCmr(mRunningCodecMode);
         }
     }
+}
+
+void IAudioSourceNode::triggerAnbrQuery(uint32_t cmr)
+{
+    AnbrMode param;
+
+    IMLOGD1("[triggerAnbrQuery] - mode : %d", cmr);
+
+    param.setAnbrUplinkCodecMode(cmr);
+    param.setAnbrDownlinkCodecMode(0);
+
+    AudioConfig* audioConfig = new AudioConfig();
+    audioConfig->setAnbrMode(param);
+
+    mCallback->SendEvent(kAudioTriggerAnbrQueryInd, reinterpret_cast<uint64_t>(audioConfig));
 }

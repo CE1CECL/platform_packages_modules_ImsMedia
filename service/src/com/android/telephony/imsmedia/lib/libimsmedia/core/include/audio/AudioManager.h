@@ -69,9 +69,11 @@ protected:
     virtual void sendRtpHeaderExtension(
             int sessionId, std::list<RtpHeaderExtension>* listExtension);
     virtual void setMediaQualityThreshold(int sessionId, MediaQualityThreshold* threshold);
+    virtual void requestRtpReceptionStats(int sessionId, int intervalMs);
+    virtual void adjustDelay(int sessionId, int delayMs);
     virtual void SendInternalEvent(
             uint32_t event, uint64_t sessionId, uint64_t paramA, uint64_t paramB);
-    virtual bool isOtherSessionActive(const int sessionId);
+    virtual bool deactivateOtherSessionIfActive(const int sessionId);
 
     static AudioManager* sManager;
     std::unordered_map<int, std::unique_ptr<AudioSession>> mSessions;
