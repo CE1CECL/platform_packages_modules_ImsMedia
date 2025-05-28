@@ -88,8 +88,6 @@ ImsMediaResult ImsMediaVideoUtil::ParseAvcSpropParam(const char* szSpropparam, t
     uint32_t nSPSConfigSize = 0;
     uint32_t chroma_format_idc = 0;
 
-    memset(pSPSConfig, 0x00, MAX_CONFIG_LEN);
-
     for (int32_t i = 0; i < MAX_CONFIG_LEN; i++)
     {
         uint8_t Comma = ',';
@@ -255,7 +253,6 @@ ImsMediaResult ImsMediaVideoUtil::ParseHevcSpropParam(const char* szSpropparam, 
     char pSPSConfig[MAX_CONFIG_LEN] = {'\0'};
     uint32_t nSPSConfigSize = 0;
 
-    memset(pSPSConfig, 0x00, MAX_CONFIG_LEN);
     strlcpy(pSPSConfig, szSpropparam, MAX_CONFIG_LEN);
 
     uint8_t* pszSpropparam = nullptr;
