@@ -419,6 +419,12 @@ bool ImsMediaAudioSource::startCodec()
 
     switch (mCodecType)
     {
+        case kAudioCodecPcmu:
+            sprintf(kMimeType, "audio/g711-mlaw");
+            break;
+        case kAudioCodecPcma:
+            sprintf(kMimeType, "audio/g711-alaw");
+            break;
         case kAudioCodecAmr:
             sprintf(kMimeType, "audio/3gpp");
             amrBitrate = ImsMediaAudioUtil::ConvertAmrModeToBitrate(mMode);

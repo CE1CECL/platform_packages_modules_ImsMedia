@@ -117,7 +117,15 @@ bool ImsMediaAudioPlayer::Start()
 {
     char kMimeType[128] = {'\0'};
 
-    if (mCodecType == kAudioCodecAmr)
+    if (mCodecType == kAudioCodecPcmu)
+    {
+        sprintf(kMimeType, "audio/g711-mlaw");
+    }
+    else if (mCodecType == kAudioCodecPcma)
+    {
+        sprintf(kMimeType, "audio/g711-alaw");
+    }
+    else if (mCodecType == kAudioCodecAmr)
     {
         sprintf(kMimeType, "audio/3gpp");
     }
@@ -145,7 +153,7 @@ bool ImsMediaAudioPlayer::Start()
 
     IMLOGD1("[Start] Creating codec[%s]", kMimeType);
 
-    if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
+    if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
     {
         mFormat = AMediaFormat_new();
         AMediaFormat_setString(mFormat, AMEDIAFORMAT_KEY_MIME, kMimeType);
@@ -183,7 +191,7 @@ bool ImsMediaAudioPlayer::Start()
     if (result != AAUDIO_OK)
     {
         IMLOGE1("[Start] Error start stream[%s]", AAudio_convertResultToText(result));
-        if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
+        if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
         {
             AMediaCodec_delete(mCodec);
             mCodec = nullptr;
@@ -199,7 +207,7 @@ bool ImsMediaAudioPlayer::Start()
     if (result != AAUDIO_OK)
     {
         IMLOGE1("[Start] Error start stream[%s]", AAudio_convertResultToText(result));
-        if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
+        if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
         {
             AMediaCodec_delete(mCodec);
             mCodec = nullptr;
@@ -211,7 +219,7 @@ bool ImsMediaAudioPlayer::Start()
 
     IMLOGI1("[Start] start stream state[%s]", AAudio_convertStreamStateToText(nextState));
 
-    if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
+    if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
     {
         media_status_t codecResult = AMediaCodec_start(mCodec);
         if (codecResult != AMEDIA_OK)
@@ -233,14 +241,14 @@ void ImsMediaAudioPlayer::Stop()
 {
     IMLOGD0("[Stop] enter");
     std::lock_guard<std::mutex> guard(mMutex);
-    if ((mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb) && (mCodec != nullptr))
+    if ((mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb) && (mCodec != nullptr))
     {
         AMediaCodec_stop(mCodec);
         AMediaCodec_delete(mCodec);
         mCodec = nullptr;
     }
 
-    if ((mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb) && (mFormat != nullptr))
+    if ((mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb) && (mFormat != nullptr))
     {
         AMediaFormat_delete(mFormat);
         mFormat = nullptr;
@@ -286,7 +294,7 @@ bool ImsMediaAudioPlayer::onDataFrame(uint8_t* buffer, uint32_t size, FrameType 
         return false;
     }
 
-    if (mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
+    if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma || mCodecType == kAudioCodecAmr || mCodecType == kAudioCodecAmrWb)
     {
         if (mCodec == nullptr)
         {

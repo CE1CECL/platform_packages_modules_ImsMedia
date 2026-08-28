@@ -47,10 +47,10 @@ RtpDecoderNode::RtpDecoderNode(BaseSessionCallback* callback) :
     mReceivingSSRC = 0;
     mInactivityTime = 0;
     mNoRtpTime = 0;
-    mRtpPayloadTx = 0;
-    mRtpPayloadRx = 0;
-    mRtpTxDtmfPayload = 0;
-    mRtpRxDtmfPayload = 0;
+    mRtpPayloadTx = -1;
+    mRtpPayloadRx = -1;
+    mRtpTxDtmfPayload = -1;
+    mRtpRxDtmfPayload = -1;
     mDtmfSamplingRate = 0;
     mCvoValue = CVO_DEFINE_NONE;
     mRedundantPayload = 0;
@@ -89,7 +89,7 @@ ImsMediaResult RtpDecoderNode::Start()
 {
     IMLOGD1("[Start] type[%d]", mMediaType);
 
-    if (mRtpPayloadTx == 0 || mRtpPayloadRx == 0)
+    if (mRtpPayloadTx < 0 || mRtpPayloadRx < 0)
     {
         IMLOGE0("[Start] invalid payload number");
         return RESULT_INVALID_PARAM;

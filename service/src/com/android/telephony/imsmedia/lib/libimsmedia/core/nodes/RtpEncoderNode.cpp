@@ -31,10 +31,10 @@ RtpEncoderNode::RtpEncoderNode(BaseSessionCallback* callback) :
     mMark = false;
     mPrevTimestamp = 0;
     mSamplingRate = 0;
-    mRtpPayloadTx = 0;
-    mRtpPayloadRx = 0;
-    mRtpTxDtmfPayload = 0;
-    mRtpRxDtmfPayload = 0;
+    mRtpPayloadTx = -1;
+    mRtpPayloadRx = -1;
+    mRtpTxDtmfPayload = -1;
+    mRtpRxDtmfPayload = -1;
     mDtmfSamplingRate = 0;
     mDtmfTimestamp = 0;
     mCvoValue = CVO_DEFINE_NONE;
@@ -64,7 +64,7 @@ ImsMediaResult RtpEncoderNode::Start()
     IMLOGD1("[Start] type[%d]", mMediaType);
     bool bResetSsrc = false;
 
-    if (mRtpPayloadTx == 0 || mRtpPayloadRx == 0)
+    if (mRtpPayloadTx < 0 || mRtpPayloadRx < 0)
     {
         IMLOGE0("[Start] invalid payload number");
         return RESULT_INVALID_PARAM;
