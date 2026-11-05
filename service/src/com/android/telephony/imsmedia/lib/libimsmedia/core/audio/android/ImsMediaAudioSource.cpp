@@ -303,6 +303,20 @@ void* ImsMediaAudioSource::run()
                     }
                     size = 0;
                 }
+                else if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma)
+                {
+                    if (ptsUsec == 0)
+                    {
+                        ptsUsec = ImsMediaTimer::GetTimeInMicroSeconds() / 1000;
+                    }
+
+                    if (mCallback != nullptr)
+                    {
+                        mCallback->onDataFrame(
+                                (uint8_t*)buffer, (mBufferSize * 2), ptsUsec, evsFlags);
+                    }
+                    size = 0;
+                }
             }
         }
 
@@ -430,6 +444,12 @@ bool ImsMediaAudioSource::startCodec()
         case kAudioCodecEvs:
             // TODO: Integration with libEVS is required.
             sprintf(kMimeType, "audio/evs");
+            break;
+        case kAudioCodecPcmu:
+            //sprintf(kMimeType, "audio/g711-mlaw");
+            break;
+        case kAudioCodecPcma:
+            //sprintf(kMimeType, "audio/g711-alaw");
             break;
         default:
             return false;

@@ -130,6 +130,14 @@ bool ImsMediaAudioPlayer::Start()
         // TODO: Integration with libEVS is required.
         sprintf(kMimeType, "audio/evs");
     }
+    else if (mCodecType == kAudioCodecPcmu)
+    {
+        sprintf(kMimeType, "audio/g711-mlaw");
+    }
+    else if (mCodecType == kAudioCodecPcma)
+    {
+        sprintf(kMimeType, "audio/g711-alaw");
+    }
     else
     {
         return false;
@@ -301,6 +309,12 @@ bool ImsMediaAudioPlayer::onDataFrame(uint8_t* buffer, uint32_t size, FrameType 
     {
         // TODO:Integration with libEVS is required.
         return decodeEvs(buffer, size);
+    }
+    else if (mCodecType == kAudioCodecPcmu || mCodecType == kAudioCodecPcma)
+    {
+        memcpy(mBuffer, buffer, (160 * 2));
+        // call audio write
+        AAudioStream_write(mAudioStream, mBuffer, 160, 0);
     }
     return false;
 }
